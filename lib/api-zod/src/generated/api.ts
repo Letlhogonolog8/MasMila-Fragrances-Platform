@@ -144,6 +144,19 @@ export const GetAdminSummaryResponse = zod.object({
 
 
 /**
+ * @summary Get configurable compensation settings
+ */
+export const GetAdminSettingsResponse = zod.object({
+  "openingOrder": zod.number().int(),
+  "teamLeaderRate": zod.number(),
+  "managerRate": zod.number(),
+  "directorRate": zod.number(),
+  "personalTarget": zod.number().int(),
+  "teamTarget": zod.number().int()
+})
+
+
+/**
  * @summary Update configurable compensation settings
  */
 export const UpdateAdminSettingsBody = zod.object({

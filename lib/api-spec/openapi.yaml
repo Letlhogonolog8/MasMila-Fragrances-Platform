@@ -118,6 +118,17 @@ paths:
               schema:
                 $ref: "#/components/schemas/AdminSummary"
   /admin-settings:
+    get:
+      operationId: getAdminSettings
+      tags: [admin]
+      summary: Get configurable compensation settings
+      responses:
+        "200":
+          description: Current admin settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSettings"
     patch:
       operationId: updateAdminSettings
       tags: [admin]

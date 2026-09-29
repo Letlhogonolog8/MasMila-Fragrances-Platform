@@ -10,6 +10,9 @@ import {
   UpdateAdminSettingsBody,
   UpdateAdminSettingsResponse,
 } from "@workspace/api-zod";
+import { db, auditLogsTable, compensationSettingsTable, resellerApplicationsTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { shopifyStorefrontRequest } from "../lib/shopifyStorefrontClient";
 
 const router: IRouter = Router();
 
@@ -119,7 +122,7 @@ const activities = [
   },
 ];
 
-let settings = {
+const fallbackSettings = {
   openingOrder: 10,
   teamLeaderRate: 5,
   managerRate: 2,
@@ -128,12 +131,58 @@ let settings = {
   teamTarget: 100,
 };
 
-const applications: Array<Record<string, unknown>> = [];
+type ShopifyProductResponse = {
+  products: {
+    nodes: Array<{
+      id: string;
+      title: string;
+      handle: string;
+      featuredImage?: { url: string; altText?: string | null } | null;
+      priceRange: { minVariantPrice: { amount: string } };
+      variants: { nodes: Array<{ id: string; title: string; availableForSale: boolean }> };
+    }>;
+  };
+};
 
-router.get("/products", (req, res) => {
+async function loadProducts() {
+  try {
+    const data = await shopifyStorefrontRequest<ShopifyProductResponse>(`#graphql
+      query Products {
+        products(first: 24) {
+          nodes {
+            id title handle
+            featuredImage { url altText }
+            priceRange { minVariantPrice { amount } }
+            variants(first: 1) { nodes { id title availableForSale } }
+          }
+        }
+      }
+    `);
+    if (data.products.nodes.length) {
+      return data.products.nodes.map((product, index) => ({
+        id: product.id,
+        name: product.title,
+        sku: product.handle.toUpperCase(),
+        family: ["Floral", "Fresh", "Woody", "Citrus"][index % 4],
+        category: "Unisex",
+        size: product.variants.nodes[0]?.title || "50ml",
+        price: Number(product.priceRange.minVariantPrice.amount),
+        image: product.featuredImage?.url || productImages[index % productImages.length],
+        notes: ["Signature blend", "Mas'Mila fragrance"],
+        badge: product.variants.nodes[0]?.availableForSale ? null : "Coming soon",
+      }));
+    }
+  } catch {
+    // The review catalog remains available until the connected store has published products.
+  }
+  return products;
+}
+
+router.get("/products", async (req, res) => {
   const query = ListProductsQueryParams.parse(req.query);
+  const catalog = await loadProducts();
   const search = query.search?.toLowerCase().trim();
-  const filtered = products
+  const filtered = catalog
     .filter((product) => !query.category || product.category === query.category || product.family === query.category)
     .filter((product) => {
       if (!search) return true;
@@ -147,24 +196,36 @@ router.get("/products", (req, res) => {
   res.json(ListProductsResponse.parse(filtered));
 });
 
-router.get("/home-summary", (_req, res) => {
+router.get("/home-summary", async (_req, res) => {
+  const catalog = await loadProducts();
   res.json(
     GetHomeSummaryResponse.parse({
-      featured: products.slice(0, 4),
+      featured: catalog.slice(0, 4),
       totalProducts: 160,
       families: ["Floral", "Fresh", "Woody", "Citrus", "Oriental", "Sweet"],
     }),
   );
 });
 
-router.post("/reseller-applications", (req, res) => {
+router.post("/reseller-applications", async (req, res) => {
   const input = SubmitResellerApplicationBody.parse(req.body);
   const application = {
-    id: `APP-${String(applications.length + 1).padStart(4, "0")}`,
+    id: `APP-${Date.now()}`,
     status: "pending",
     message: "Your application is in the Mas'Mila approval queue. We'll be in touch shortly.",
   };
-  applications.push({ ...input, ...application, createdAt: new Date().toISOString() });
+  await db.insert(resellerApplicationsTable).values({
+    applicationId: application.id,
+    ...input,
+    referringCode: input.referringCode || null,
+    status: application.status,
+  });
+  await db.insert(auditLogsTable).values({
+    action: "reseller_application_submitted",
+    entityType: "reseller_application",
+    entityId: application.id,
+    metadata: JSON.stringify({ email: input.email }),
+  });
   res.status(201).json(SubmitResellerApplicationResponse.parse(application));
 });
 
@@ -213,9 +274,40 @@ router.get("/admin-summary", (_req, res) => {
   );
 });
 
-router.patch("/admin-settings", (req, res) => {
-  settings = UpdateAdminSettingsBody.parse(req.body);
-  res.json(UpdateAdminSettingsResponse.parse(settings));
+router.get("/admin-settings", async (_req, res) => {
+  const [row] = await db.select().from(compensationSettingsTable).where(eq(compensationSettingsTable.id, 1));
+  res.json(UpdateAdminSettingsResponse.parse(row ?? fallbackSettings));
+});
+
+router.patch("/admin-settings", async (req, res) => {
+  const next = UpdateAdminSettingsBody.parse(req.body);
+  const [row] = await db
+    .insert(compensationSettingsTable)
+    .values({
+      id: 1,
+      ...next,
+      teamLeaderRate: String(next.teamLeaderRate),
+      managerRate: String(next.managerRate),
+      directorRate: String(next.directorRate),
+    })
+    .onConflictDoUpdate({
+      target: compensationSettingsTable.id,
+      set: {
+        ...next,
+        teamLeaderRate: String(next.teamLeaderRate),
+        managerRate: String(next.managerRate),
+        directorRate: String(next.directorRate),
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+  await db.insert(auditLogsTable).values({
+    action: "compensation_settings_updated",
+    entityType: "compensation_settings",
+    entityId: "1",
+    metadata: JSON.stringify(next),
+  });
+  res.json(UpdateAdminSettingsResponse.parse(row));
 });
 
 export default router;
