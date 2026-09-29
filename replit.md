@@ -1,6 +1,6 @@
-# [Project name]
+# Mas'Mila Fragrances
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Mas'Mila is a South African fragrance storefront with a reseller application flow and leadership dashboard foundation.
 
 ## Run & Operate
 
@@ -22,23 +22,33 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/masmila-fragrances` — React storefront, shop, reseller application, reseller portal, and admin dashboard.
+- `artifacts/api-server/src/routes/masmila.ts` — typed demo API for product discovery, reseller applications, portal data, admin summaries, and compensation settings.
+- `lib/api-spec/openapi.yaml` — source of truth for the Mas'Mila API contract.
+- `lib/api-client-react/src/generated` — generated frontend hooks and schemas; regenerate with the API spec command after contract changes.
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The initial build prioritizes the Phase 1 product surface from the proposal: public shopping, reseller onboarding, referral-ready portal views, and configurable incentive settings.
+- Storefront and dashboard data flow through the shared OpenAPI-generated client, keeping the UI ready for a persistent Shopify/Postgres implementation.
+- The proposal's 5% Team Leader, 2% Manager, and 1% Director rates are represented as editable settings rather than hard-coded UI copy.
+- The current API uses seeded in-memory data so the product can be reviewed immediately; production Shopify, payments, courier, auth, and commission-ledger integrations remain follow-on work.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Public home page, shop catalog, search/filtering, product cards, bag interaction, and brand story pages.
+- Reseller application form with approval-queue response state.
+- Reseller portal with rank, sales, bottle volume, team progress, referral code, recent activity, and incentive visibility.
+- Admin dashboard with revenue, bottles, active resellers, weekly sales, top products, and editable compensation settings.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+None recorded.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Run `pnpm --filter @workspace/api-spec run codegen` after editing `lib/api-spec/openapi.yaml`.
+- API routes live behind `/api`; the web artifact is served at `/`.
 
 ## Pointers
 

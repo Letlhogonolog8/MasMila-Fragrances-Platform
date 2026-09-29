@@ -1,0 +1,893 @@
+MAS'MILA FRAGRANCES WEBSITE PROPOSAL 
+Shopify E-Commerce Website + Reseller & Team Management Portal 
+Developer Request for Quotation / Technical Specification 
+Business: Mas'Mila Fragrances 
+Platform preference: Shopify 
+Currency: South African Rand (ZAR) 
+Primary market: South Africa 
+Business model: Direct-to-consumer retail + reseller sales + sales-based team leadership 
+incentives 
+1. PROJECT OBJECTIVE 
+Mas'Mila requires a professional Shopify e-commerce website selling a range of 50ml and 
+100ml fragrances, supported by a secure reseller portal. 
+The system must allow Mas'Mila to: 
+1. Sell fragrances directly to consumers at the recommended retail price. 
+2. Register and manage approved resellers. 
+3. Give resellers access to wholesale pricing. 
+4. Allow resellers to place stock orders. 
+5. Track reseller sales activity. 
+6. Allow qualifying resellers to build sales teams. 
+7. Calculate Team Leader and Manager incentives based on qualifying product sales. 
+8. Track team performance and organisational volume. 
+9. Automatically calculate commissions/incentives. 
+10. Provide dashboards for Mas'Mila administrators, resellers, Team Leaders and 
+Managers. 
+11. Maintain a complete audit trail of orders, sales, qualifications and commission 
+calculations. 
+12. Allow compensation percentages and qualification rules to be changed by the 
+Mas'Mila administrator. 
+The system must be designed for future scaling to thousands of customers and hundreds of 
+resellers. 
+3. USER TYPES 
+The system must support the following user roles: 
+A. Customer 
+Can: 
+ Browse products 
+ Search fragrances 
+ View fragrance information 
+ Add products to cart 
+ Purchase at retail price 
+ Create an account 
+ View order history 
+ Track orders 
+ Manage delivery information 
+B. Reseller 
+Can: 
+ Register 
+ Apply to become a reseller 
+ Be approved by Mas'Mila 
+ Log into reseller portal 
+ View reseller prices 
+ Place reseller orders 
+ View order history 
+ View personal sales 
+ View personal performance 
+ Access marketing materials 
+ Generate a personal referral/customer link 
+ See current status 
+ See qualification progress 
+ Build a sales team subject to qualification rules 
+C. Team Leader 
+All reseller functionality plus: 
+ View direct team members 
+ View team sales 
+ View qualifying team volume 
+ View Team Leader incentive 
+ View team activity 
+ Access training resources 
+ Access team marketing materials 
+ See inactive team members 
+ Track progress toward maintaining Team Leader status 
+D. Manager 
+All Team Leader functionality plus: 
+ View qualifying Team Leaders 
+ View wider organisation performance 
+ View organisational sales 
+ View Manager incentive 
+ View rank/qualification status 
+ View performance reports 
+E. Mas'Mila Administrator 
+Full control over: 
+ Products 
+ Prices 
+ Inventory 
+ Orders 
+ Customers 
+ Resellers 
+ Teams 
+ Ranks 
+ Qualification rules 
+ Commission/incentive percentages 
+ Reports 
+ Marketing materials 
+ Payout records 
+ User status 
+ Website content 
+4. PUBLIC WEBSITE 
+Homepage 
+Sections: 
+1. Hero banner 
+2. Mas'Mila brand introduction 
+3. Featured fragrances 
+4. Shop by fragrance family 
+5. Best sellers 
+6. New arrivals 
+7. "Become a Mas'Mila Reseller" 
+8. Reseller opportunity 
+9. About Mas'Mila 
+10. Customer testimonials 
+11. Social media feed 
+12. Newsletter/WhatsApp opt-in 
+13. Footer 
+Primary calls-to-action: 
+SHOP MAS'MILA 
+BECOME A RESELLER 
+5. PRODUCT CATALOGUE 
+The website must support at least 160 fragrance products/variants and allow additional 
+products to be added without developer intervention. 
+Each product should contain: 
+ Product name 
+ Mas'Mila product code/SKU 
+ Fragrance category 
+ Fragrance family 
+ Description 
+ Scent profile 
+ Top notes 
+ Middle notes 
+ Base notes 
+ Product image 
+ 50ml/100ml size 
+ Retail price 
+ Stock quantity 
+ Availability 
+ Recommended retail price 
+ Internal product cost 
+ Reseller price 
+ Status: Active/Inactive 
+NB: Internal cost and reseller pricing must not be publicly displayed. 
+6. PRODUCT SEARCH & FILTERING 
+Customers must be able to filter by: 
+ Women's fragrances 
+ Men's fragrances 
+ Unisex fragrances 
+ Floral 
+ Fresh 
+ Fruity 
+ Woody 
+ Oriental/amber 
+ Sweet 
+ Citrus 
+ Best sellers 
+ New arrivals 
+Search must work by: 
+ Product name 
+ SKU 
+ Fragrance family 
+ Keywords 
+7. CUSTOMER CHECKOUT 
+Standard Shopify checkout. 
+Required: 
+ ZAR 
+ South African delivery addresses 
+ Payment gateway integration 
+ Delivery calculation 
+ Order confirmation 
+ Email confirmation 
+ Order tracking 
+ Customer account 
+Developer must recommend appropriate South African payment and courier integrations. 
+8. RESELLER APPLICATION 
+Create a dedicated page: 
+"Become a Mas'Mila Reseller" 
+Application fields: 
+ First name 
+ Surname 
+ Mobile number 
+ Email 
+ Province 
+ City 
+ Preferred contact method 
+ How did you hear about Mas'Mila? 
+ Referring reseller ID/code 
+ Consent to reseller terms 
+ Consent to privacy policy 
+ Agreement to reseller terms and conditions 
+The application must enter an Admin Approval Queue. 
+Administrator can: 
+Approve / Reject / Request More Information 
+Once approved, the customer account is assigned: 
+Reseller status 
+9. RESELLER PORTAL 
+URL structure should be similar to: 
+/account/reseller 
+or a secure Shopify customer-account extension/app route. 
+Shopify's current customer-account architecture supports custom account pages and 
+extensions, including pages for customer-specific functionality. (Shopify) 
+Dashboard should display: 
+Welcome, [Name] 
+Current Rank: Reseller 
+Personal Sales This Month: R____ 
+Personal Bottles: ___ 
+Team Bottles: ___ 
+Current Status: Active/Inactive 
+Next Rank: Team Leader 
+Progress: ___% 
+10. RESELLER SHOP 
+When an approved reseller logs in, products should automatically display reseller pricing. 
+Example: 
+Retail price: 
+Reseller price: 
+Customer-facing visitors must never see the reseller price. 
+The system must prevent unapproved customers from accessing reseller pricing. 
+11. RESELLER ORDERING 
+Minimum opening order: 
+10 bottles 
+The system should enforce the minimum opening order for newly approved resellers. 
+Administrator must be able to change this threshold. 
+Recommended: 
+ Opening order: 10 
+ Reorder minimum: configurable 
+ Mixed fragrances allowed 
+ Bulk pricing rules configurable 
+12. RESELLER SALES TRACKING 
+The system must distinguish: 
+Personal product purchases from Mas'Mila 
+and 
+Customer sales attributed to a reseller 
+Where technically possible, customer orders should be attributed through: 
+ Personal reseller referral link 
+ Reseller code 
+ Customer referral code 
+ QR code 
+ Unique landing page 
+ Manual attribution by administrator 
+Each reseller receives a unique: 
+Reseller ID 
+Example: 
+MSM-000123 
+And referral code: 
+NOMDADE123 
+13. TEAM-BUILDING SYSTEM 
+Resellers may invite other people to become Mas'Mila resellers. 
+However: 
+Recruitment itself must not generate a commission. 
+The system must calculate leadership incentives only against qualifying product sales. 
+Structure: 
+Mas'Mila 
+↓ 
+Manager 
+↓ 
+Team Leader 
+↓ 
+Reseller 
+↓ 
+Customer 
+The system should record the sponsor/upline relationship when a reseller joins. 
+14. RESELLER RANK 
+LEVEL 1 — RESELLER 
+Qualification: 
+ Approved reseller 
+ Minimum opening order of 10 bottles 
+No team commission. 
+Primary earnings: 
+15. TEAM LEADER 
+Qualification: 
+All of the following: 
+ Minimum 5 active direct resellers 
+ Minimum 20 personal bottles sold per calendar month 
+ Minimum 100 qualifying team bottles per calendar month 
+ Account in good standing 
+The system must automatically calculate qualification. 
+Team Leader incentive: 
+5% 
+Calculated on qualifying wholesale sales generated by the Team Leader's qualifying direct 
+team. 
+Example: 
+100 bottles × R140 = R14,000 qualifying sales. 
+5% × R14,000: 
+R700 Team Leader incentive 
+16. MANAGER 
+Qualification: 
+ Minimum 3 active Team Leaders 
+ Minimum 15 active resellers in organisation 
+ Minimum 300 qualifying organisational bottles/month 
+ Minimum 20 personal bottles/month 
+ Account in good standing 
+Manager incentive: 
+2% 
+Calculated on qualifying sales generated by qualifying Team Leaders directly under the 
+Manager, subject to the final compensation-plan rules. 
+17. DIRECTOR — FUTURE PHASE 
+This should be built into the architecture but can remain disabled during Phase 1. 
+Proposed qualification: 
+ Minimum 5 active Managers 
+ Minimum 50 active resellers 
+ Minimum 1,000 qualifying bottles/month 
+Proposed leadership incentive: 
+1% 
+Administrator must be able to activate/deactivate this level. 
+18. INACTIVITY RULES 
+Reseller 
+If a reseller sells 0 bottles in a calendar month: 
+Status: 
+Inactive 
+They retain their account and products already purchased. 
+They do not receive leadership incentives while inactive. 
+Reactivation 
+Sell 10 bottles during a calendar month. 
+No rejoining fee. 
+19. TEAM LEADER INACTIVITY 
+Team Leader must maintain: 
+ 20 personal qualifying bottles/month 
+ 100 qualifying team bottles/month 
+If they fail to qualify: 
+Month 1: 
+Warning/coaching status. 
+Month 2: 
+Team Leader status becomes inactive. 
+They revert to: 
+Reseller 
+They retain their reseller account. 
+No additional joining fee. 
+They can regain Team Leader status by meeting the qualification criteria again. 
+20. COMMISSION / INCENTIVE ENGINE 
+This is a critical component. 
+The developer must build a dedicated commission ledger. 
+Each qualifying sale must create a record containing: 
+ Order number 
+ Customer/reseller 
+ Product 
+ Quantity 
+ Wholesale value 
+ Qualification status 
+ Upline 
+ Rank 
+ Applicable percentage 
+ Calculated incentive 
+ Approval status 
+ Payment status 
+ Date 
+ Refund/cancellation status 
+The system must support: 
+Pending → Approved → Paid 
+and retain historical records. 
+21. COMMISSION SAFETY RULES 
+Incentives must not be calculated on: 
+ Recruitment alone 
+ Joining 
+ Registration 
+ Membership fees 
+ Buying a "position" 
+ Recruiting another reseller 
+Incentives are based on qualifying product sales. 
+The final implementation must be reviewed for compliance with South African consumer and 
+direct-selling requirements before launch. 
+22. REFUNDS & CANCELLED ORDERS 
+If a qualifying order is: 
+ Cancelled 
+ Refunded 
+ Returned 
+ Charged back 
+the associated incentive must automatically be: 
+Reversed / adjusted 
+The system must maintain a complete audit trail. 
+23. TEAM LEADER DASHBOARD 
+Display: 
+Personal 
+ Personal bottles 
+ Personal sales 
+ Personal gross margin 
+ Monthly target 
+ Progress 
+Team 
+ Number of active resellers 
+ Number of inactive resellers 
+ Team bottles 
+ Team sales 
+ Team target 
+ Team Leader incentive 
+ Qualification status 
+Team member table 
+Reseller Status Personal Bottles Last Order Team 
+24. MANAGER DASHBOARD 
+Display: 
+ Personal sales 
+ Team Leader count 
+ Active reseller count 
+ Organisation bottles 
+ Organisation sales 
+ Monthly target 
+ Manager incentive 
+ Qualification progress 
+25. ADMIN DASHBOARD 
+The Mas'Mila administrator must be able to see: 
+Sales 
+ Daily sales 
+ Weekly sales 
+ Monthly sales 
+ Annual sales 
+ Retail sales 
+ Reseller sales 
+ Wholesale sales 
+Products 
+ Units sold 
+ Revenue 
+ Cost 
+ Gross profit 
+ Stock 
+ Best sellers 
+ Slow sellers 
+Resellers 
+ Total registered 
+ Approved 
+ Active 
+ Inactive 
+ New this month 
+ Top sellers 
+ Top teams 
+Organisation 
+ Team Leaders 
+ Managers 
+ Directors 
+ Team volume 
+ Leadership incentives 
+ Pending incentives 
+ Paid incentives 
+26. ADMIN COMPENSATION SETTINGS 
+The administrator must be able to change: 
+ Retail price 
+ Reseller price 
+ Minimum opening order 
+ Team Leader percentage 
+ Manager percentage 
+ Director percentage 
+ Personal sales qualification 
+ Team sales qualification 
+ Active reseller definition 
+ Rank requirements 
+ Inactivity period 
+ Reactivation requirement 
+These values must be configurable through the admin interface. 
+They must NOT be hard-coded into the application. 
+27. MARKETING PORTAL 
+Every approved reseller should have access to: 
+Marketing Materials 
+ Product images 
+ Product descriptions 
+ Social media graphics 
+ WhatsApp promotional images 
+ Price lists 
+ Product catalogues 
+ Launch campaigns 
+ Videos 
+ Training documents 
+Admin should be able to upload/update materials. 
+28. RESELLER REFERRAL TOOLS 
+Each reseller receives: 
+ Unique referral URL 
+ QR code 
+ Referral code 
+ Share-to-WhatsApp button 
+ Share-to-Facebook 
+ Share-to-Instagram 
+ Copy link button 
+Example: 
+masmila.co.za/r/NOMDADE123 
+Customer purchases through the link. 
+The sale is attributed to the reseller. 
+29. CUSTOMER ACCOUNT 
+Customer account should provide: 
+ Order history 
+ Order tracking 
+ Saved address 
+ Profile 
+ Wishlist 
+ Reorder 
+ Referral information where applicable 
+Shopify's current customer-account framework supports order history, profiles and 
+additional custom account functionality. (Shopify) 
+Enquiry form: 
+ Company name 
+ Contact person 
+ Email 
+ Telephone 
+ Quantity required 
+ Product/fragrance preference 
+ Required date 
+ Delivery location 
+ Branding requirements 
+ Message 
+Admin receives enquiry. 
+ Reserved quantity 
+ Sold quantity 
+ Low-stock level 
+The system should generate: 
+LOW STOCK ALERT 
+when inventory falls below an administrator-defined threshold. 
+32. REPORTING 
+Reports required: 
+Daily 
+ Orders 
+ Revenue 
+ Bottles sold 
+ Gross profit 
+Weekly 
+ Sales 
+ Reseller activity 
+ Team activity 
+ Top products 
+Monthly 
+ Retail revenue 
+ Reseller revenue 
+ Product costs 
+ Gross profit 
+ Incentives 
+ Net contribution before overhead 
+ Active reseller count 
+ New reseller registrations 
+ Customer acquisition 
+ Repeat purchases 
+Reports should be exportable to CSV/Excel. 
+Dashboard should show: 
+Current gross contribution 
+Target 
+Percentage achieved 
+Bottles required 
+Bottles sold 
+Remaining 
+34. SECURITY 
+Required: 
+ Secure authentication 
+ Role-based access 
+ Reseller-only pricing protection 
+ Admin-only compensation settings 
+ Secure customer data 
+ Audit logs 
+ Protection against duplicate commission claims 
+ Protection against self-referral abuse 
+ Protection against commission manipulation 
+ Secure API authentication 
+ Regular backups 
+35. FRAUD / ABUSE CONTROLS 
+System should flag: 
+ Self-referrals 
+ Duplicate customer accounts 
+ Duplicate orders 
+ Suspicious referral activity 
+ Refund-related commissions 
+ Multiple accounts using same information 
+ Unusual order patterns 
+Admin should be able to place an account on: 
+Review / Hold / Suspended 
+36. NOTIFICATION SYSTEM 
+Automated notifications: 
+Customer 
+ Account created 
+ Order received 
+ Payment received 
+ Order shipped 
+ Order delivered 
+ Promotional campaigns 
+Reseller 
+ Reseller approved 
+ Order confirmed 
+ New team member 
+ Qualification achieved 
+ Qualification warning 
+ Rank achieved 
+ Incentive calculated 
+ Incentive approved 
+ Incentive paid 
+ Inactivity warning 
+Administrator 
+ New reseller application 
+ Low stock 
+ Large order 
+ Commission exception 
+ Suspicious activity 
+37. WHATSAPP INTEGRATION 
+The system should be designed for strong WhatsApp usage. 
+Required buttons: 
+ORDER VIA WEBSITE 
+CHAT ON WHATSAPP 
+SHARE PRODUCT 
+SHARE RESELLER LINK 
+Future phase: 
+WhatsApp Business API automation for: 
+ Order notifications 
+ Reseller onboarding 
+ Sales reminders 
+ Campaign broadcasts 
+ Team performance notifications 
+Any WhatsApp API implementation must comply with Meta/WhatsApp business messaging 
+requirements. 
+38. MOBILE-FIRST DESIGN 
+The reseller portal must be designed primarily for mobile. 
+Reason: 
+Mas'Mila resellers are expected to sell through: 
+ WhatsApp 
+ Instagram 
+ Facebook 
+ TikTok 
+ Personal networks 
+ Community networks 
+ Events 
+The portal must work properly on: 
+ Android 
+ iPhone 
+ Tablet 
+ Desktop 
+39. WEBSITE PAGES 
+Required pages: 
+1. Home 
+2. Shop 
+3. All Fragrances 
+4. Women's Fragrances 
+5. Men's Fragrances 
+6. Unisex 
+7. New Arrivals 
+8. Best Sellers 
+9. About Mas'Mila 
+10. Our Story 
+11. Become a Reseller 
+12. Reseller Login 
+13. Reseller Dashboard 
+14. How Reselling Works 
+15. Corporate & Bulk Orders 
+16. Contact 
+17. FAQs 
+18. Shipping & Delivery 
+19. Returns & Refunds 
+20. Privacy Policy 
+21. Terms & Conditions 
+22. Reseller Terms 
+23. Cookie Policy 
+40. SEO 
+Developer must configure: 
+ SEO titles 
+ Meta descriptions 
+ Product structured data 
+ Product URLs 
+ Image alt text 
+ Sitemap 
+ Google Search Console 
+ Google Analytics 
+ Meta Pixel 
+ Conversion tracking 
+The site must be optimised for searches relating to: 
+ South African perfume 
+ 50ml perfume 
+ 100ml perfume  
+ affordable fragrances 
+ perfume gifts 
+ fragrance gifts 
+ perfume reseller 
+ start a perfume business 
+ perfume wholesale South Africa 
+41. ANALYTICS 
+Integrate: 
+ Shopify Analytics 
+ Google Analytics 
+ Google Search Console 
+ Meta Pixel 
+ TikTok Pixel where appropriate 
+Track: 
+ Product views 
+ Add to cart 
+ Checkout 
+ Purchases 
+ Reseller applications 
+ Reseller approvals 
+ Referral conversions 
+ Repeat customers 
+ Average order value 
+ Customer acquisition cost 
+42. PHASED DEVELOPMENT 
+PHASE 1 — LAUNCH 
+Build: 
+ Shopify storefront 
+ Product catalogue 
+ Checkout 
+ Payment 
+ Delivery 
+ Customer accounts 
+ Reseller application 
+ Reseller pricing 
+ Reseller ordering 
+ Reseller dashboard 
+ Referral codes 
+ Basic sales tracking 
+ Basic commission ledger 
+ Admin dashboard 
+PHASE 2 — TEAM SYSTEM 
+Build: 
+ Team hierarchy 
+ Team Leader qualification 
+ Team Leader incentives 
+ Manager qualification 
+ Manager incentives 
+ Team dashboards 
+ Automated qualification 
+ Inactivity rules 
+ Commission reports 
+PHASE 3 — SCALE 
+Build: 
+ Director level 
+ Advanced analytics 
+ Corporate/B2B portal 
+ Automated WhatsApp 
+ Advanced marketing portal 
+ Advanced fraud detection 
+ Mobile/PWA improvements 
+ Advanced forecasting 
+43. DEVELOPER DELIVERABLES 
+Quotation must include: 
+1. UI/UX design 
+2. Shopify theme development/customisation 
+3. Shopify configuration 
+4. Custom reseller application 
+5. Customer account integration 
+6. Reseller portal 
+7. Team hierarchy engine 
+8. Commission engine 
+9. Admin dashboard 
+10. Product catalogue setup 
+11. Payment integration 
+12. Delivery integration 
+13. Analytics integration 
+14. SEO setup 
+15. Security 
+16. Testing 
+17. Mobile testing 
+18. Training 
+19. Documentation 
+20. Deployment 
+21. Post-launch support 
+44. IMPORTANT TECHNICAL REQUIREMENT 
+The developer must NOT create the reseller/commission system as a fragile collection of 
+manual spreadsheets. 
+The system must have a proper underlying data model for: 
+ Users 
+ Customers 
+ Resellers 
+ Sponsor/upline relationships 
+ Teams 
+ Orders 
+ Products 
+ Sales 
+ Qualification periods 
+ Ranks 
+ Commission rules 
+ Commission transactions 
+ Payouts 
+ Refunds 
+ Audit logs 
+Custom customer-account pages/extensions are supported by Shopify's current platform, 
+and custom data can be stored using Shopify metafields where appropriate. (Shopify) 
+45. DEVELOPER QUOTATION REQUIREMENT 
+Please provide separate pricing for: 
+A. Shopify setup 
+B. Website design/development 
+C. Product catalogue setup 
+D. Reseller portal 
+E. Team management system 
+F. Commission engine 
+G. Admin dashboard 
+H. Payment integration 
+I. Courier integration 
+J. WhatsApp integration 
+K. Analytics 
+L. SEO 
+M. Testing 
+N. Training 
+O. Monthly maintenance 
+P. Third-party app subscription costs 
+Q. Shopify subscription costs 
+R. Hosting/app infrastructure costs 
+S. Future development hourly/day rate 
+46. DEVELOPER MUST DISCLOSE 
+Please identify: 
+ Which functionality is native Shopify 
+ Which functionality requires a third-party app 
+ Which functionality requires custom development 
+ Which apps require monthly fees 
+ Which functionality has transaction fees 
+ Any Shopify plan limitations 
+ Any API limitations 
+ Any South African payment limitations 
+ Any WhatsApp API costs 
+ Any data/security considerations 
+47. OWNERSHIP 
+All custom development created specifically for Mas'Mila must be owned by Mas'Mila. 
+The developer must provide: 
+ Source code where applicable 
+ Shopify store ownership 
+ Custom app ownership/access 
+ Domain ownership 
+ Analytics ownership 
+ Meta Business ownership 
+ API credentials/access documentation 
+ Database/data ownership 
+ Design files 
+ Documentation 
+The developer must not retain exclusive control of the Mas'Mila store or customer/reseller 
+data. 
+48. ACCEPTANCE TESTING 
+Before final payment, Mas'Mila must be able to test: 
+Customer 
+ Browse 
+ Purchase 
+ Receive confirmation 
+ Track order 
+Reseller 
+ Apply 
+ Get approved 
+ Log in 
+ See R140 pricing 
+ Place order 
+ See dashboard 
+ Generate referral link 
+Team Leader 
+ Meet qualification 
+ See team 
+ See team sales 
+ See 5% incentive 
+Manager 
+ Meet qualification 
+ See organisation 
+ See 2% incentive 
+Admin 
+ Change prices 
+ Change percentages 
+ Approve reseller 
+ Suspend reseller 
+ View sales 
+ View teams 
+ View incentives 
+ Export reports 
+All calculations must be independently verified against test cases before launch. 
+49. SUCCESS CRITERIA 
+The finished Mas'Mila platform should allow the business to move from: 
+Founder-led selling 
+to: 
+Digital storefront + reseller network + sales-based leadership organisation 
+with the infrastructure capable of supporting: 
+160+ fragrances 
+100+ active resellers 
+20+ Team Leaders 
+Multiple Managers 
+Thousands of customers 
+5,000+ bottles/month 
+without requiring a complete rebuild. 
+50. CORE BRAND POSITIONING 
+The website should communicate Mas'Mila as: 
+A fragrance brand. 
+A lifestyle brand. 
+A business opportunity. 
+The reseller opportunity should be presented as an opportunity to build a fragrance sales 
+business, with earnings linked to actual product sales. 
+Suggested positioning: 
+"Wear the fragrance. Build the business." 
+or 
+"Smell Good. Sell More. Build Mas'Mila." 
+The final tagline can be selected during the branding phase. 
+51. FINAL DEVELOPER REQUEST 
+Please quote for the above Mas'Mila Shopify e-commerce and reseller/team-management 
+platform. 
+The quotation must clearly distinguish: 
+ONE-TIME DEVELOPMENT COSTS 
+from 
+MONTHLY SOFTWARE/APP COSTS 
+and 
+TRANSACTION/USAGE COSTS. 
+Please also provide: 
+ Estimated development timeline 
+ Development milestones 
+ Payment schedule 
+ Technology stack 
+ Shopify plan recommendation 
+ Third-party apps proposed 
+ Custom-development components 
+ Warranty period 
+ Post-launch support 
+ Maintenance costs 
+ Scalability considerations 
+ Data/security approach 
+ Ownership/IP terms 
+Mas'Mila is seeking a long-term technology partner, not merely a website designer. 
+Please send us two quotes: 
+Quote A — MVP: storefront + reseller portal + basic sales tracking. 
+Quote B — Full platform: storefront + reseller portal + automated team/commission engine 
++ dashboards + corporate/B2B functionality. 
+Please ensure that the 5% / 2% / 1% percentages are configurable in the admin panel.  
+ENDS  

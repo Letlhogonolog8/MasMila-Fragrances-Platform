@@ -10,6 +10,12 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: catalog
+    description: Public fragrance catalog
+  - name: reseller
+    description: Reseller applications and portal
+  - name: admin
+    description: Admin dashboard and compensation settings
 paths:
   /healthz:
     get:
@@ -24,6 +30,111 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /products:
+    get:
+      operationId: listProducts
+      tags: [catalog]
+      summary: List fragrance products
+      parameters:
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 24
+            default: 12
+      responses:
+        "200":
+          description: Fragrance products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+  /home-summary:
+    get:
+      operationId: getHomeSummary
+      tags: [catalog]
+      summary: Get public storefront summary
+      responses:
+        "200":
+          description: Storefront summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HomeSummary"
+  /reseller-applications:
+    post:
+      operationId: submitResellerApplication
+      tags: [reseller]
+      summary: Submit a reseller application
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResellerApplicationInput"
+      responses:
+        "201":
+          description: Application submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResellerApplication"
+  /reseller-portal:
+    get:
+      operationId: getResellerPortal
+      tags: [reseller]
+      summary: Get seeded reseller portal data
+      responses:
+        "200":
+          description: Reseller portal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResellerPortal"
+  /admin-summary:
+    get:
+      operationId: getAdminSummary
+      tags: [admin]
+      summary: Get admin dashboard summary
+      responses:
+        "200":
+          description: Admin summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSummary"
+  /admin-settings:
+    patch:
+      operationId: updateAdminSettings
+      tags: [admin]
+      summary: Update configurable compensation settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminSettingsInput"
+      responses:
+        "200":
+          description: Updated admin settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSettings"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +144,267 @@ components:
           type: string
       required:
         - status
+    Product:
+      type: object
+      required:
+        - id
+        - name
+        - sku
+        - family
+        - category
+        - size
+        - price
+        - image
+        - notes
+        - badge
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        sku:
+          type: string
+        family:
+          type: string
+        category:
+          type: string
+        size:
+          type: string
+        price:
+          type: number
+        image:
+          type: string
+        notes:
+          type: array
+          items:
+            type: string
+        badge:
+          type: ["string", "null"]
+    HomeSummary:
+      type: object
+      required:
+        - featured
+        - totalProducts
+        - families
+      properties:
+        featured:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+        totalProducts:
+          type: integer
+        families:
+          type: array
+          items:
+            type: string
+    ResellerApplicationInput:
+      type: object
+      required:
+        - firstName
+        - surname
+        - mobile
+        - email
+        - province
+        - city
+        - contactMethod
+        - heardAbout
+        - termsAccepted
+        - privacyAccepted
+      properties:
+        firstName:
+          type: string
+          minLength: 1
+        surname:
+          type: string
+          minLength: 1
+        mobile:
+          type: string
+          minLength: 8
+        email:
+          type: string
+          format: email
+        province:
+          type: string
+        city:
+          type: string
+        contactMethod:
+          type: string
+        heardAbout:
+          type: string
+        referringCode:
+          type: ["string", "null"]
+        termsAccepted:
+          type: boolean
+        privacyAccepted:
+          type: boolean
+    ResellerApplication:
+      type: object
+      required:
+        - id
+        - status
+        - message
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+    ResellerPortal:
+      type: object
+      required:
+        - name
+        - rank
+        - status
+        - resellerId
+        - referralCode
+        - personalSales
+        - personalBottles
+        - teamBottles
+        - progress
+        - nextRank
+        - teamLeaders
+        - activity
+        - incentive
+      properties:
+        name:
+          type: string
+        rank:
+          type: string
+        status:
+          type: string
+        resellerId:
+          type: string
+        referralCode:
+          type: string
+        personalSales:
+          type: number
+        personalBottles:
+          type: integer
+        teamBottles:
+          type: integer
+        progress:
+          type: integer
+        nextRank:
+          type: string
+        teamLeaders:
+          type: integer
+        activity:
+          type: array
+          items:
+            $ref: "#/components/schemas/Activity"
+        incentive:
+          type: number
+    Activity:
+      type: object
+      required:
+        - id
+        - label
+        - detail
+        - time
+        - tone
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        detail:
+          type: string
+        time:
+          type: string
+        tone:
+          type: string
+    AdminSummary:
+      type: object
+      required:
+        - revenue
+        - bottles
+        - activeResellers
+        - pendingIncentives
+        - weeklySales
+        - topProducts
+      properties:
+        revenue:
+          type: number
+        bottles:
+          type: integer
+        activeResellers:
+          type: integer
+        pendingIncentives:
+          type: number
+        weeklySales:
+          type: array
+          items:
+            $ref: "#/components/schemas/SalesPoint"
+        topProducts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductPerformance"
+    SalesPoint:
+      type: object
+      required:
+        - label
+        - value
+      properties:
+        label:
+          type: string
+        value:
+          type: number
+    ProductPerformance:
+      type: object
+      required:
+        - name
+        - units
+        - revenue
+      properties:
+        name:
+          type: string
+        units:
+          type: integer
+        revenue:
+          type: number
+    AdminSettings:
+      type: object
+      required:
+        - openingOrder
+        - teamLeaderRate
+        - managerRate
+        - directorRate
+        - personalTarget
+        - teamTarget
+      properties:
+        openingOrder:
+          type: integer
+        teamLeaderRate:
+          type: number
+        managerRate:
+          type: number
+        directorRate:
+          type: number
+        personalTarget:
+          type: integer
+        teamTarget:
+          type: integer
+    AdminSettingsInput:
+      type: object
+      required:
+        - openingOrder
+        - teamLeaderRate
+        - managerRate
+        - directorRate
+        - personalTarget
+        - teamTarget
+      properties:
+        openingOrder:
+          type: integer
+        teamLeaderRate:
+          type: number
+        managerRate:
+          type: number
+        directorRate:
+          type: number
+        personalTarget:
+          type: integer
+        teamTarget:
+          type: integer
 

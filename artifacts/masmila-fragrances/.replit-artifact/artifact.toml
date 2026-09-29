@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Mas'Mila Fragrances"
+description = "A South African fragrance storefront with retail shopping, reseller onboarding, referral tools, and a leadership dashboard foundation for Mas'Mila's growing sales network."
+version = "1.0.0"
+id = "artifacts/masmila-fragrances"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20112
+
+[services.development]
+run = "pnpm --filter @workspace/masmila-fragrances run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/masmila-fragrances", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/masmila-fragrances/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20112"
+BASE_PATH = "/"
