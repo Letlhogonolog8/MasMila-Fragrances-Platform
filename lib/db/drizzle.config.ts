@@ -4,7 +4,9 @@ import { defineConfig } from "drizzle-kit";
 const url = process.env.DATABASE_URL ?? process.env.NETLIFY_DATABASE_URL;
 
 if (!url) {
-  throw new Error("DATABASE_URL, ensure the database is provisioned");
+  throw new Error(
+    "No database configured. Set DATABASE_URL, or on Netlify add the Netlify DB (Neon) extension, which provides NETLIFY_DATABASE_URL.",
+  );
 }
 
 export default defineConfig({
