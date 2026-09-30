@@ -10,17 +10,31 @@ globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * `--netlify` bundles the Netlify Function (src/netlify.ts) into a single
+ * file at <repo>/netlify/functions/api.mjs. Logging uses no transports in
+ * production, so the pino worker files are not needed there (Netlify would
+ * otherwise treat each emitted .mjs as a separate function).
+ */
+const netlify = process.argv.includes("--netlify");
+
 async function buildAll() {
-  const distDir = path.resolve(artifactDir, "dist");
+  const distDir = netlify
+    ? path.resolve(artifactDir, "..", "..", "netlify", "functions")
+    : path.resolve(artifactDir, "dist");
   await rm(distDir, { recursive: true, force: true });
 
   await esbuild({
-    entryPoints: [path.resolve(artifactDir, "src/index.ts")],
+    entryPoints: netlify
+      ? { api: path.resolve(artifactDir, "src/netlify.ts") }
+      : [path.resolve(artifactDir, "src/index.ts")],
     platform: "node",
+    target: "node20",
     bundle: true,
     format: "esm",
     outdir: distDir,
     outExtension: { ".js": ".mjs" },
+    ...(netlify ? { define: { "process.env.NODE_ENV": '"production"' } } : {}),
     logLevel: "info",
     // Some packages may not be bundleable, so we externalize them, we can add more here as needed.
     // Some of the packages below may not be imported or installed, but we're adding them in case they are in the future.
@@ -101,11 +115,13 @@ async function buildAll() {
       "puppeteer-core",
       "electron",
     ],
-    sourcemap: "linked",
-    plugins: [
-      // pino relies on workers to handle logging, instead of externalizing it we use a plugin to handle it
-      esbuildPluginPino({ transports: ["pino-pretty"] })
-    ],
+    sourcemap: netlify ? false : "linked",
+    plugins: netlify
+      ? []
+      : [
+          // pino relies on workers to handle logging, instead of externalizing it we use a plugin to handle it
+          esbuildPluginPino({ transports: ["pino-pretty"] }),
+        ],
     // Make sure packages that are cjs only (e.g. express) but are bundled continue to work in our esm output file
     banner: {
       js: `import { createRequire as __bannerCrReq } from 'node:module';

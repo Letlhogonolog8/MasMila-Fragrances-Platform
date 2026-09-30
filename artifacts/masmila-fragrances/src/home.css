@@ -1,0 +1,96 @@
+/* Landing page. */
+
+/* Keep the arrow on the same line as "Add to bag". */
+.product-add { display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+/* Product imagery: artwork/photos render as-is (no blend over the backdrop). */
+.product-image { mix-blend-mode: normal; opacity: 1; }
+.product-visual::before { display: none; }
+
+/* hero */
+.hero-v2 { min-height: 640px; padding-bottom: 56px; }
+.hero-v2 .hero-art { background: linear-gradient(160deg, #ecd5b3, #dcbf97); }
+.hero-bottles { position: absolute; inset: 0; z-index: 1; }
+.hero-bottles .hb { position: absolute; bottom: 4%; width: 46%; height: auto; border-radius: 16px; box-shadow: 0 30px 50px rgba(51, 36, 25, .22); transition: transform .5s cubic-bezier(.2, .8, .2, 1); }
+.hero-bottles .hb-0 { left: 27%; bottom: 12%; z-index: 3; transform: rotate(-2deg); }
+.hero-bottles .hb-1 { left: 3%; width: 38%; z-index: 2; transform: rotate(-9deg); }
+.hero-bottles .hb-2 { right: 3%; width: 38%; z-index: 2; transform: rotate(8deg); }
+.hero-art:hover .hb-1 { transform: rotate(-12deg) translateY(-6px); }
+.hero-art:hover .hb-2 { transform: rotate(11deg) translateY(-6px); }
+/* Clear of both the arch's curve and the bottle cards. */
+.hero-v2 .hero-sticker { z-index: 4; top: 24%; right: 6%; bottom: auto; width: 104px; height: 104px; }
+.quick-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 26px; font-size: 12px; color: hsl(var(--muted-foreground)); }
+.quick-links a { padding: 7px 13px; border-radius: 99px; background: hsl(var(--card)); border: 1px solid hsl(var(--border)); color: hsl(var(--foreground)); text-decoration: none; font-weight: 700; transition: border-color .2s ease, color .2s ease; }
+.quick-links a:hover { border-color: hsl(var(--primary)); color: hsl(var(--primary)); }
+.hero-proof { display: flex; align-items: center; gap: 10px; margin-top: 22px; font-size: 12px; color: hsl(var(--muted-foreground)); }
+.stars { display: inline-flex; gap: 2px; color: #e0a526; }
+
+/* trust strip */
+.trust-strip { border-block: 1px solid hsl(var(--border)); background: hsl(var(--card)); }
+.trust-grid { display: grid; grid-template-columns: repeat(4, 1fr); }
+.trust-grid > div { display: flex; gap: 12px; align-items: center; padding: 20px 16px; color: hsl(var(--primary)); }
+.trust-grid > div + div { border-left: 1px solid hsl(var(--border)); }
+.trust-grid span { display: grid; font-size: 12px; color: hsl(var(--muted-foreground)); }
+.trust-grid strong { color: hsl(var(--foreground)); font-size: 13px; }
+
+/* sections */
+.section.compact { padding: 76px 0; }
+.stat-row { display: flex; gap: 30px; margin-top: 24px; flex-wrap: wrap; }
+.stat-row strong { display: block; font-family: var(--app-font-serif); font-size: 34px; letter-spacing: -.04em; color: hsl(var(--primary)); }
+.stat-row span { font-size: 12px; color: hsl(var(--muted-foreground)); }
+
+.showcase-tabs { display: inline-flex; gap: 4px; padding: 4px; border-radius: 99px; background: hsl(var(--muted)); }
+.showcase-tabs button { border: 0; background: none; padding: 9px 16px; border-radius: 99px; font: inherit; font-size: 12px; font-weight: 800; color: hsl(var(--muted-foreground)); transition: background .2s ease, color .2s ease; }
+.showcase-tabs button.on { background: hsl(var(--card)); color: hsl(var(--primary)); box-shadow: var(--shadow-sm); }
+.showcase-foot { display: flex; justify-content: center; margin-top: 30px; }
+
+.family-tile { position: relative; overflow: hidden; }
+.family-tile .swatch { width: 26px; height: 26px; border-radius: 50%; background: var(--swatch); box-shadow: 0 0 0 5px color-mix(in srgb, var(--swatch) 20%, transparent); margin-bottom: 6px; }
+.family-tile:hover { border-color: var(--swatch); }
+.family-tile small { color: var(--swatch); }
+
+.check-list { list-style: none; padding: 0; margin: 0 0 26px; display: grid; gap: 10px; }
+.check-list li { display: flex; gap: 10px; align-items: center; font-size: 14px; }
+.check-list svg { color: hsl(145 45% 38%); flex: none; }
+
+.testimonial-top { display: flex; justify-content: space-between; align-items: center; }
+.testimonial figcaption { display: flex; gap: 10px; align-items: center; }
+.testimonial figcaption > span:last-child { display: grid; }
+.avatar { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: hsl(var(--secondary)); color: hsl(var(--secondary-foreground)); font-family: var(--app-font-serif); font-size: 15px; }
+
+.social-tile { position: relative; border-radius: 12px; }
+.social-tile span { position: absolute; inset: 0; display: grid; place-items: center; color: white; background: rgba(45, 39, 56, .45); opacity: 0; transition: opacity .25s ease; }
+.social-tile:hover span { opacity: 1; }
+
+.optin-card { display: grid; grid-template-columns: 1.3fr 1fr; gap: 40px; align-items: center; padding: 44px; border-radius: 24px; background: hsl(var(--card)); border: 1px solid hsl(var(--card-border)); }
+.newsletter-light { max-width: none; }
+.newsletter-light .newsletter-row input { border-color: hsl(var(--border)); background: hsl(var(--background)); padding: 13px 12px; }
+.newsletter-light small { color: hsl(var(--muted-foreground)); }
+
+@media (max-width: 1100px) {
+  .trust-grid { grid-template-columns: repeat(2, 1fr); }
+  .trust-grid > div:nth-child(3) { border-left: 0; }
+  .trust-grid > div:nth-child(n + 3) { border-top: 1px solid hsl(var(--border)); }
+}
+@media (max-width: 900px) {
+  .optin-card { grid-template-columns: 1fr; padding: 28px; }
+  .hero-v2 .hero-art { min-height: 420px; }
+}
+@media (max-width: 680px) {
+  .hero-v2 { padding-top: 34px; }
+  .hero-v2 .hero-art { min-height: 340px; }
+  .hero-v2 .hero-sticker { width: 76px; height: 76px; top: 16%; right: 3%; font-size: 8px; }
+  .trust-grid > div { padding: 14px 8px; gap: 8px; }
+  .trust-grid strong { font-size: 12px; }
+  .trust-grid span { font-size: 11px; }
+  .section-head .showcase-tabs { width: 100%; }
+  .showcase-tabs button { flex: 1; padding: 9px 6px; }
+  /* Swipeable rows instead of long stacked grids. */
+  .scroller { display: grid; grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: 72%; overflow-x: auto; scroll-snap-type: x mandatory; gap: 14px; padding-bottom: 8px; margin-inline: -15px; padding-inline: 15px; scrollbar-width: none; }
+  .scroller::-webkit-scrollbar { display: none; }
+  .scroller > * { scroll-snap-align: start; }
+  .testimonial-grid.scroller { grid-auto-columns: 84%; }
+  .stat-row { gap: 20px; }
+  .stat-row strong { font-size: 28px; }
+  .section.compact { padding: 56px 0; }
+}

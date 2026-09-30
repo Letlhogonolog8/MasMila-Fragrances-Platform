@@ -4,6 +4,12 @@ import App from './App';
 import { ErrorBoundary } from '@/components/error-boundary';
 
 import './index.css';
+import './platform.css';
+import './dashboard.css';
+import './home.css';
+import { initTheme } from '@/components/theme';
+
+initTheme();
 
 createRoot(document.getElementById('root')!, {
   // Keeps caught errors off reportError(), which would raise the dev overlay.

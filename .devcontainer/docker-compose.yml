@@ -1,0 +1,46 @@
+services:
+  app:
+    image: node:24-bookworm
+    command: sleep infinity
+    working_dir: /workspace
+    ports:
+      - "5173:5173"
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://postgres:masmila@db:5432/masmila
+      # File changes on a Windows bind mount don't raise inotify events.
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ..:/workspace:cached
+      # Keep Linux node_modules in volumes so the Windows copies stay untouched.
+      - nm-root:/workspace/node_modules
+      - nm-api:/workspace/artifacts/api-server/node_modules
+      - nm-web:/workspace/artifacts/masmila-fragrances/node_modules
+      - nm-mockup:/workspace/artifacts/mockup-sandbox/node_modules
+      - nm-client:/workspace/lib/api-client-react/node_modules
+      - nm-spec:/workspace/lib/api-spec/node_modules
+      - nm-zod:/workspace/lib/api-zod/node_modules
+      - nm-db:/workspace/lib/db/node_modules
+      - nm-scripts:/workspace/scripts/node_modules
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: masmila
+      POSTGRES_DB: masmila
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+  nm-root:
+  nm-api:
+  nm-web:
+  nm-mockup:
+  nm-client:
+  nm-spec:
+  nm-zod:
+  nm-db:
+  nm-scripts:

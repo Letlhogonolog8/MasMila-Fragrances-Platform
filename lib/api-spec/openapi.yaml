@@ -2,58 +2,69 @@ openapi: 3.1.0
 info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: API specification
+  version: 0.2.0
+  description: Mas'Mila storefront, reseller portal, team/commission engine and admin API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
   - name: catalog
-    description: Public fragrance catalog
+    description: Public fragrance catalogue and storefront
+  - name: checkout
+    description: Cart checkout and order tracking
+  - name: account
+    description: Signed-in customer account
   - name: reseller
     description: Reseller applications and portal
   - name: admin
-    description: Admin dashboard and compensation settings
+    description: Administrator console
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
-      summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/HealthStatus"
+              schema: { $ref: "#/components/schemas/HealthStatus" }
+
+  # ---------------------------------------------------------------- catalog
+  /store-config:
+    get:
+      operationId: getStoreConfig
+      tags: [catalog]
+      summary: Public storefront configuration (shipping, minimums, contact)
+      responses:
+        "200":
+          description: Store config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoreConfig" }
   /products:
     get:
       operationId: listProducts
       tags: [catalog]
-      summary: List fragrance products
+      summary: List and search fragrances. Reseller prices are only included for approved resellers.
       parameters:
-        - name: category
+        - { name: category, in: query, required: false, schema: { type: string } }
+        - { name: family, in: query, required: false, schema: { type: string } }
+        - { name: size, in: query, required: false, schema: { type: string } }
+        - name: collection
           in: query
           required: false
-          schema:
-            type: string
-        - name: search
+          schema: { type: string, enum: [best-sellers, new-arrivals, featured] }
+        - { name: search, in: query, required: false, schema: { type: string } }
+        - name: sort
           in: query
           required: false
-          schema:
-            type: string
+          schema: { type: string, enum: [featured, name, price-asc, price-desc, newest] }
         - name: limit
           in: query
           required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 24
-            default: 12
+          schema: { type: integer, minimum: 1, maximum: 200, default: 48 }
       responses:
         "200":
           description: Fragrance products
@@ -61,361 +72,1860 @@ paths:
             application/json:
               schema:
                 type: array
-                items:
-                  $ref: "#/components/schemas/Product"
+                items: { $ref: "#/components/schemas/Product" }
+  /products/{slug}:
+    get:
+      operationId: getProduct
+      tags: [catalog]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Product detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductDetail" }
   /home-summary:
     get:
       operationId: getHomeSummary
       tags: [catalog]
-      summary: Get public storefront summary
       responses:
         "200":
-          description: Storefront summary
+          description: Storefront home content
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/HomeSummary"
-  /reseller-applications:
+              schema: { $ref: "#/components/schemas/HomeSummary" }
+  /newsletter:
     post:
-      operationId: submitResellerApplication
-      tags: [reseller]
-      summary: Submit a reseller application
+      operationId: subscribeNewsletter
+      tags: [catalog]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/ResellerApplicationInput"
+            schema: { $ref: "#/components/schemas/NewsletterInput" }
+      responses:
+        "200":
+          description: Subscribed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+  /enquiries:
+    post:
+      operationId: submitEnquiry
+      tags: [catalog]
+      summary: Corporate / bulk enquiry or contact form
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EnquiryInput" }
+      responses:
+        "201":
+          description: Enquiry received
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+  /referrals:
+    get:
+      operationId: getReferral
+      tags: [catalog]
+      summary: Resolve a reseller referral code (and record the visit)
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: string } }
+        - { name: source, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Referral info
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReferralInfo" }
+
+  # ---------------------------------------------------------------- checkout
+  /checkout:
+    post:
+      operationId: checkout
+      tags: [checkout]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CheckoutInput" }
+      responses:
+        "201":
+          description: Order created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CheckoutResult" }
+  /orders/track:
+    get:
+      operationId: trackOrder
+      tags: [checkout]
+      parameters:
+        - { name: orderNumber, in: query, required: true, schema: { type: string } }
+        - { name: email, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Order status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+
+  # ---------------------------------------------------------------- account
+  /me:
+    get:
+      operationId: getMe
+      tags: [account]
+      responses:
+        "200":
+          description: Current session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+    patch:
+      operationId: updateMe
+      tags: [account]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProfileInput" }
+      responses:
+        "200":
+          description: Updated session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+  /me/orders:
+    get:
+      operationId: listMyOrders
+      tags: [account]
+      responses:
+        "200":
+          description: Order history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Order" }
+  /me/wishlist:
+    get:
+      operationId: listWishlist
+      tags: [account]
+      responses:
+        "200":
+          description: Wishlist
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Product" }
+  /me/wishlist/{productId}:
+    put:
+      operationId: addToWishlist
+      tags: [account]
+      parameters:
+        - { name: productId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+    delete:
+      operationId: removeFromWishlist
+      tags: [account]
+      parameters:
+        - { name: productId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+  /me/notifications:
+    get:
+      operationId: listNotifications
+      tags: [account]
+      responses:
+        "200":
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Notification" }
+  /me/notifications/read:
+    post:
+      operationId: markNotificationsRead
+      tags: [account]
+      responses:
+        "200":
+          description: Marked read
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+
+  # ---------------------------------------------------------------- reseller
+  /reseller-applications:
+    post:
+      operationId: submitResellerApplication
+      tags: [reseller]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResellerApplicationInput" }
       responses:
         "201":
           description: Application submitted
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/ResellerApplication"
-  /reseller-portal:
+              schema: { $ref: "#/components/schemas/ResellerApplication" }
+  /reseller/dashboard:
     get:
-      operationId: getResellerPortal
+      operationId: getResellerDashboard
       tags: [reseller]
-      summary: Get seeded reseller portal data
       responses:
         "200":
-          description: Reseller portal
+          description: Reseller / Team Leader / Manager dashboard
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResellerDashboard" }
+  /reseller/team:
+    get:
+      operationId: listResellerTeam
+      tags: [reseller]
+      responses:
+        "200":
+          description: Direct team members
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ResellerPortal"
-  /admin-summary:
+                type: array
+                items: { $ref: "#/components/schemas/TeamMember" }
+  /reseller/organisation:
+    get:
+      operationId: getResellerOrganisation
+      tags: [reseller]
+      responses:
+        "200":
+          description: Wider organisation (Managers)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organisation" }
+  /reseller/incentives:
+    get:
+      operationId: listResellerIncentives
+      tags: [reseller]
+      responses:
+        "200":
+          description: Incentive ledger entries for the signed-in reseller
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/LedgerEntry" }
+  /reseller/sales:
+    get:
+      operationId: listResellerSales
+      tags: [reseller]
+      summary: Customer sales attributed to the signed-in reseller
+      responses:
+        "200":
+          description: Attributed sales
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Order" }
+  /marketing-materials:
+    get:
+      operationId: listMarketingMaterials
+      tags: [reseller]
+      responses:
+        "200":
+          description: Marketing materials available to the signed-in reseller
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MarketingMaterial" }
+
+  # ---------------------------------------------------------------- admin
+  /admin/summary:
     get:
       operationId: getAdminSummary
       tags: [admin]
-      summary: Get admin dashboard summary
       responses:
         "200":
-          description: Admin summary
+          description: Admin dashboard
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/AdminSummary"
-  /admin-settings:
+              schema: { $ref: "#/components/schemas/AdminSummary" }
+  /admin/settings:
     get:
       operationId: getAdminSettings
       tags: [admin]
-      summary: Get configurable compensation settings
       responses:
         "200":
-          description: Current admin settings
+          description: Current settings
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/AdminSettings"
+              schema: { $ref: "#/components/schemas/AdminSettings" }
     patch:
       operationId: updateAdminSettings
       tags: [admin]
-      summary: Update configurable compensation settings
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/AdminSettingsInput"
+            schema: { $ref: "#/components/schemas/AdminSettingsInput" }
       responses:
         "200":
-          description: Updated admin settings
+          description: Updated settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminSettings" }
+  /admin/site-content:
+    put:
+      operationId: updateSiteContent
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SiteContent" }
+      responses:
+        "200":
+          description: Updated content
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SiteContent" }
+  /admin/applications:
+    get:
+      operationId: listAdminApplications
+      tags: [admin]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Reseller application queue
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AdminSettings"
+                type: array
+                items: { $ref: "#/components/schemas/AdminApplication" }
+  /admin/applications/{id}/decision:
+    post:
+      operationId: decideApplication
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApplicationDecisionInput" }
+      responses:
+        "200":
+          description: Updated application
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminApplication" }
+  /admin/resellers:
+    get:
+      operationId: listAdminResellers
+      tags: [admin]
+      parameters:
+        - { name: search, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Resellers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AdminReseller" }
+  /admin/resellers/{id}:
+    patch:
+      operationId: updateAdminReseller
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminResellerUpdate" }
+      responses:
+        "200":
+          description: Updated reseller
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminReseller" }
+  /admin/customers:
+    get:
+      operationId: listAdminCustomers
+      tags: [admin]
+      parameters:
+        - { name: search, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Customers and users
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AdminCustomer" }
+  /admin/customers/{id}:
+    patch:
+      operationId: updateAdminCustomer
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminCustomerUpdate" }
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminCustomer" }
+  /admin/teams:
+    get:
+      operationId: listAdminTeams
+      tags: [admin]
+      responses:
+        "200":
+          description: Full reseller hierarchy with current-month volume
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TeamNode" }
+  /admin/products:
+    get:
+      operationId: listAdminProducts
+      tags: [admin]
+      responses:
+        "200":
+          description: Products incl. cost, reseller price and inventory
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AdminProduct" }
+    post:
+      operationId: createAdminProduct
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProduct" }
+  /admin/products/{id}:
+    patch:
+      operationId: updateAdminProduct
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProduct" }
+  /admin/orders:
+    get:
+      operationId: listAdminOrders
+      tags: [admin]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string } }
+        - { name: channel, in: query, required: false, schema: { type: string } }
+        - { name: search, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Order" }
+  /admin/orders/{id}:
+    patch:
+      operationId: updateAdminOrder
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminOrderUpdate" }
+      responses:
+        "200":
+          description: Updated order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+  /admin/orders/{id}/refund:
+    post:
+      operationId: refundAdminOrder
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefundInput" }
+      responses:
+        "200":
+          description: Refunded / cancelled order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+  /admin/commissions:
+    get:
+      operationId: listAdminCommissions
+      tags: [admin]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string } }
+        - { name: period, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Commission ledger
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/LedgerEntry" }
+  /admin/commissions/approve:
+    post:
+      operationId: approveCommissions
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IdsInput" }
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CountResult" }
+  /admin/payouts:
+    get:
+      operationId: listAdminPayouts
+      tags: [admin]
+      responses:
+        "200":
+          description: Payout records
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Payout" }
+    post:
+      operationId: createPayouts
+      tags: [admin]
+      summary: Pay out all approved incentives (optionally for selected resellers)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PayoutInput" }
+      responses:
+        "200":
+          description: Payouts created
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Payout" }
+  /admin/qualification:
+    get:
+      operationId: getQualification
+      tags: [admin]
+      parameters:
+        - { name: period, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Qualification snapshot for a period
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QualificationResult" }
+    post:
+      operationId: runQualification
+      tags: [admin]
+      summary: Run (or re-run) monthly qualification, rank changes and incentive settlement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QualificationRunInput" }
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QualificationResult" }
+  /admin/fraud-flags:
+    get:
+      operationId: listFraudFlags
+      tags: [admin]
+      responses:
+        "200":
+          description: Fraud / abuse flags
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FraudFlag" }
+  /admin/fraud-flags/{id}:
+    patch:
+      operationId: updateFraudFlag
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StatusInput" }
+      responses:
+        "200":
+          description: Updated flag
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FraudFlag" }
+  /admin/enquiries:
+    get:
+      operationId: listAdminEnquiries
+      tags: [admin]
+      responses:
+        "200":
+          description: Corporate and contact enquiries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Enquiry" }
+  /admin/enquiries/{id}:
+    patch:
+      operationId: updateAdminEnquiry
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StatusInput" }
+      responses:
+        "200":
+          description: Updated enquiry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Enquiry" }
+  /admin/marketing-materials:
+    get:
+      operationId: listAdminMarketingMaterials
+      tags: [admin]
+      responses:
+        "200":
+          description: All marketing materials
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MarketingMaterial" }
+    post:
+      operationId: createMarketingMaterial
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MarketingMaterialInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MarketingMaterial" }
+  /admin/marketing-materials/{id}:
+    delete:
+      operationId: deleteMarketingMaterial
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+  /admin/audit-logs:
+    get:
+      operationId: listAuditLogs
+      tags: [admin]
+      parameters:
+        - { name: entityType, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Latest audit log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AuditLog" }
+  /admin/reports:
+    get:
+      operationId: getAdminReport
+      tags: [admin]
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/ReportType" }
+        - { name: from, in: query, required: false, schema: { type: string } }
+        - { name: to, in: query, required: false, schema: { type: string } }
+        - name: format
+          in: query
+          required: false
+          schema: { type: string, enum: [json, csv] }
+      responses:
+        "200":
+          description: Report table (JSON) or CSV download when format=csv
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Report" }
+
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
-        status:
-          type: string
+        status: { type: string }
+    Ok:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+    CountResult:
+      type: object
+      required: [count]
+      properties:
+        count: { type: integer }
+    IdsInput:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          items: { type: integer }
+    StatusInput:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, minLength: 1 }
+    SiteContent:
+      type: object
+      additionalProperties: { type: string }
+
+    StoreConfig:
+      type: object
       required:
-        - status
+        [currency, shippingFlatRate, freeShippingThreshold, openingOrder, reorderMinimum,
+         whatsappNumber, shopifyCheckoutEnabled, bankDetails, authMode, siteUrl]
+      properties:
+        currency: { type: string }
+        shippingFlatRate: { type: number }
+        freeShippingThreshold: { type: number }
+        openingOrder: { type: integer }
+        reorderMinimum: { type: integer }
+        whatsappNumber: { type: string }
+        shopifyCheckoutEnabled: { type: boolean }
+        bankDetails: { type: string }
+        authMode: { type: string, enum: [clerk, demo, none] }
+        siteUrl: { type: string }
+
     Product:
       type: object
       required:
-        - id
-        - name
-        - sku
-        - family
-        - category
-        - size
-        - price
-        - image
-        - notes
-        - badge
+        [id, slug, name, sku, family, category, size, price, recommendedRetailPrice,
+         resellerPrice, image, imageAlt, notes, badge, isBestSeller, isNew, stockStatus]
       properties:
-        id:
-          type: string
-        name:
-          type: string
-        sku:
-          type: string
-        family:
-          type: string
-        category:
-          type: string
-        size:
-          type: string
-        price:
-          type: number
-        image:
-          type: string
+        id: { type: integer }
+        slug: { type: string }
+        name: { type: string }
+        sku: { type: string }
+        family: { type: string }
+        category: { type: string }
+        size: { type: string }
+        price: { type: number, description: Retail price in ZAR }
+        recommendedRetailPrice: { type: number }
+        resellerPrice:
+          type: ["number", "null"]
+          description: Only populated for approved resellers in good standing
+        image: { type: string }
+        imageAlt: { type: string }
         notes:
           type: array
-          items:
-            type: string
-        badge:
-          type: ["string", "null"]
-    HomeSummary:
+          items: { type: string }
+        badge: { type: ["string", "null"] }
+        isBestSeller: { type: boolean }
+        isNew: { type: boolean }
+        stockStatus: { type: string, enum: [in_stock, low_stock, out_of_stock] }
+    ProductDetail:
       type: object
       required:
-        - featured
-        - totalProducts
-        - families
+        [id, slug, name, sku, family, category, size, price, recommendedRetailPrice,
+         resellerPrice, image, imageAlt, notes, badge, isBestSeller, isNew, stockStatus,
+         description, scentProfile, topNotes, middleNotes, baseNotes, seoTitle,
+         seoDescription, related]
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        name: { type: string }
+        sku: { type: string }
+        family: { type: string }
+        category: { type: string }
+        size: { type: string }
+        price: { type: number }
+        recommendedRetailPrice: { type: number }
+        resellerPrice: { type: ["number", "null"] }
+        image: { type: string }
+        imageAlt: { type: string }
+        notes:
+          type: array
+          items: { type: string }
+        badge: { type: ["string", "null"] }
+        isBestSeller: { type: boolean }
+        isNew: { type: boolean }
+        stockStatus: { type: string, enum: [in_stock, low_stock, out_of_stock] }
+        description: { type: string }
+        scentProfile: { type: string }
+        topNotes:
+          type: array
+          items: { type: string }
+        middleNotes:
+          type: array
+          items: { type: string }
+        baseNotes:
+          type: array
+          items: { type: string }
+        seoTitle: { type: string }
+        seoDescription: { type: string }
+        related:
+          type: array
+          items: { $ref: "#/components/schemas/Product" }
+    FamilyCount:
+      type: object
+      required: [name, count]
+      properties:
+        name: { type: string }
+        count: { type: integer }
+    Testimonial:
+      type: object
+      required: [name, location, quote]
+      properties:
+        name: { type: string }
+        location: { type: string }
+        quote: { type: string }
+    HomeSummary:
+      type: object
+      required: [featured, bestSellers, newArrivals, families, totalProducts, testimonials, content]
       properties:
         featured:
           type: array
-          items:
-            $ref: "#/components/schemas/Product"
-        totalProducts:
-          type: integer
+          items: { $ref: "#/components/schemas/Product" }
+        bestSellers:
+          type: array
+          items: { $ref: "#/components/schemas/Product" }
+        newArrivals:
+          type: array
+          items: { $ref: "#/components/schemas/Product" }
         families:
           type: array
-          items:
-            type: string
+          items: { $ref: "#/components/schemas/FamilyCount" }
+        totalProducts: { type: integer }
+        testimonials:
+          type: array
+          items: { $ref: "#/components/schemas/Testimonial" }
+        content: { $ref: "#/components/schemas/SiteContent" }
+    NewsletterInput:
+      type: object
+      required: [channel, contact]
+      properties:
+        channel: { type: string, enum: [email, whatsapp] }
+        contact: { type: string, minLength: 5, maxLength: 200 }
+    EnquiryInput:
+      type: object
+      required: [kind, contactPerson, email, message]
+      properties:
+        kind: { type: string, enum: [corporate, contact] }
+        companyName: { type: ["string", "null"] }
+        contactPerson: { type: string, minLength: 1 }
+        email: { type: string, format: email }
+        phone: { type: ["string", "null"] }
+        quantity: { type: ["integer", "null"], minimum: 1 }
+        productPreference: { type: ["string", "null"] }
+        requiredDate: { type: ["string", "null"] }
+        deliveryLocation: { type: ["string", "null"] }
+        brandingRequirements: { type: ["string", "null"] }
+        message: { type: string, maxLength: 4000 }
+    ReferralInfo:
+      type: object
+      required: [code, valid, resellerName]
+      properties:
+        code: { type: string }
+        valid: { type: boolean }
+        resellerName: { type: ["string", "null"] }
+
+    CheckoutItem:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId: { type: integer }
+        quantity: { type: integer, minimum: 1, maximum: 500 }
+    Address:
+      type: object
+      required: [line1, city, province, postalCode]
+      properties:
+        line1: { type: string, minLength: 3 }
+        line2: { type: ["string", "null"] }
+        suburb: { type: ["string", "null"] }
+        city: { type: string, minLength: 2 }
+        province: { type: string, minLength: 2 }
+        postalCode: { type: string, pattern: "^[0-9]{4}$" }
+    CheckoutCustomer:
+      type: object
+      required: [firstName, surname, email, mobile]
+      properties:
+        firstName: { type: string, minLength: 1 }
+        surname: { type: string, minLength: 1 }
+        email: { type: string, format: email }
+        mobile: { type: string, minLength: 9 }
+    CheckoutInput:
+      type: object
+      required: [mode, items, customer, address, paymentMethod]
+      properties:
+        mode: { type: string, enum: [retail, reseller] }
+        items:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/CheckoutItem" }
+        customer: { $ref: "#/components/schemas/CheckoutCustomer" }
+        address: { $ref: "#/components/schemas/Address" }
+        paymentMethod: { type: string, enum: [eft, shopify] }
+        referralCode: { type: ["string", "null"] }
+        attributionSource: { type: ["string", "null"] }
+        notes: { type: ["string", "null"], maxLength: 1000 }
+        saveAddress: { type: boolean }
+    CheckoutResult:
+      type: object
+      required: [order, checkoutUrl, paymentInstructions]
+      properties:
+        order: { $ref: "#/components/schemas/Order" }
+        checkoutUrl: { type: ["string", "null"] }
+        paymentInstructions: { type: ["string", "null"] }
+    OrderItem:
+      type: object
+      required: [id, productId, slug, name, sku, size, quantity, refundedQuantity, unitPrice, lineTotal]
+      properties:
+        id: { type: integer }
+        productId: { type: integer }
+        slug: { type: string }
+        name: { type: string }
+        sku: { type: string }
+        size: { type: string }
+        quantity: { type: integer }
+        refundedQuantity: { type: integer }
+        unitPrice: { type: number }
+        lineTotal: { type: number }
+    Order:
+      type: object
+      required:
+        [id, orderNumber, channel, status, paymentMethod, paymentReference, customerName,
+         customerEmail, customerMobile, shippingAddress, bottles, subtotal, shippingFee, total,
+         courier, trackingNumber, referralCode, attributedReseller, createdAt, paidAt,
+         shippedAt, deliveredAt, items]
+      properties:
+        id: { type: integer }
+        orderNumber: { type: string }
+        channel: { type: string }
+        status: { type: string }
+        paymentMethod: { type: string }
+        paymentReference: { type: ["string", "null"] }
+        customerName: { type: string }
+        customerEmail: { type: string }
+        customerMobile: { type: string }
+        shippingAddress: { type: string }
+        bottles: { type: integer }
+        subtotal: { type: number }
+        shippingFee: { type: number }
+        total: { type: number }
+        courier: { type: ["string", "null"] }
+        trackingNumber: { type: ["string", "null"] }
+        referralCode: { type: ["string", "null"] }
+        attributedReseller: { type: ["string", "null"] }
+        createdAt: { type: string }
+        paidAt: { type: ["string", "null"] }
+        shippedAt: { type: ["string", "null"] }
+        deliveredAt: { type: ["string", "null"] }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OrderItem" }
+        wholesaleValue: { type: number, description: Admin only }
+        costValue: { type: number, description: Admin only }
+        grossProfit: { type: number, description: Admin only }
+        attributionSource: { type: ["string", "null"], description: Admin only }
+        buyerResellerCode: { type: ["string", "null"], description: Admin only }
+        incentiveTotal: { type: number, description: Admin only }
+        notes: { type: ["string", "null"], description: Admin only }
+
+    Me:
+      type: object
+      required: [signedIn, isAdmin, user, reseller, application, unreadNotifications]
+      properties:
+        signedIn: { type: boolean }
+        isAdmin: { type: boolean }
+        unreadNotifications: { type: integer }
+        user:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/UserProfile"
+        reseller:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ResellerSummary"
+        application:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApplicationStatus"
+    UserProfile:
+      type: object
+      required:
+        [id, email, firstName, surname, mobile, role, accountStatus, addressLine1, addressLine2,
+         suburb, city, province, postalCode, marketingOptIn]
+      properties:
+        id: { type: integer }
+        email: { type: string }
+        firstName: { type: string }
+        surname: { type: string }
+        mobile: { type: ["string", "null"] }
+        role: { type: string }
+        accountStatus: { type: string }
+        addressLine1: { type: ["string", "null"] }
+        addressLine2: { type: ["string", "null"] }
+        suburb: { type: ["string", "null"] }
+        city: { type: ["string", "null"] }
+        province: { type: ["string", "null"] }
+        postalCode: { type: ["string", "null"] }
+        marketingOptIn: { type: boolean }
+    ResellerSummary:
+      type: object
+      required: [id, resellerCode, referralCode, rank, status, standing, openingOrderCompleted]
+      properties:
+        id: { type: integer }
+        resellerCode: { type: string }
+        referralCode: { type: string }
+        rank: { type: string }
+        status: { type: string }
+        standing: { type: string }
+        openingOrderCompleted: { type: boolean }
+    ApplicationStatus:
+      type: object
+      required: [applicationId, status, adminNote]
+      properties:
+        applicationId: { type: string }
+        status: { type: string }
+        adminNote: { type: ["string", "null"] }
+    ProfileInput:
+      type: object
+      properties:
+        firstName: { type: string, minLength: 1 }
+        surname: { type: string, minLength: 1 }
+        mobile: { type: ["string", "null"] }
+        addressLine1: { type: ["string", "null"] }
+        addressLine2: { type: ["string", "null"] }
+        suburb: { type: ["string", "null"] }
+        city: { type: ["string", "null"] }
+        province: { type: ["string", "null"] }
+        postalCode: { type: ["string", "null"] }
+        marketingOptIn: { type: boolean }
+    Notification:
+      type: object
+      required: [id, type, title, body, link, read, createdAt]
+      properties:
+        id: { type: integer }
+        type: { type: string }
+        title: { type: string }
+        body: { type: string }
+        link: { type: ["string", "null"] }
+        read: { type: boolean }
+        createdAt: { type: string }
+
     ResellerApplicationInput:
       type: object
       required:
-        - firstName
-        - surname
-        - mobile
-        - email
-        - province
-        - city
-        - contactMethod
-        - heardAbout
-        - termsAccepted
-        - privacyAccepted
+        [firstName, surname, mobile, email, province, city, contactMethod, heardAbout,
+         termsAccepted, privacyAccepted, resellerTermsAccepted]
       properties:
-        firstName:
-          type: string
-          minLength: 1
-        surname:
-          type: string
-          minLength: 1
-        mobile:
-          type: string
-          minLength: 8
-        email:
-          type: string
-          format: email
-        province:
-          type: string
-        city:
-          type: string
-        contactMethod:
-          type: string
-        heardAbout:
-          type: string
-        referringCode:
-          type: ["string", "null"]
-        termsAccepted:
-          type: boolean
-        privacyAccepted:
-          type: boolean
+        firstName: { type: string, minLength: 1 }
+        surname: { type: string, minLength: 1 }
+        mobile: { type: string, minLength: 9 }
+        email: { type: string, format: email }
+        province: { type: string, minLength: 2 }
+        city: { type: string, minLength: 2 }
+        contactMethod: { type: string }
+        heardAbout: { type: string, minLength: 1 }
+        referringCode: { type: ["string", "null"] }
+        termsAccepted: { type: boolean }
+        privacyAccepted: { type: boolean }
+        resellerTermsAccepted: { type: boolean }
     ResellerApplication:
       type: object
-      required:
-        - id
-        - status
-        - message
+      required: [id, status, message]
       properties:
-        id:
-          type: string
-        status:
-          type: string
-        message:
-          type: string
-    ResellerPortal:
+        id: { type: string }
+        status: { type: string }
+        message: { type: string }
+    Requirement:
       type: object
-      required:
-        - name
-        - rank
-        - status
-        - resellerId
-        - referralCode
-        - personalSales
-        - personalBottles
-        - teamBottles
-        - progress
-        - nextRank
-        - teamLeaders
-        - activity
-        - incentive
+      required: [label, current, target, met]
       properties:
-        name:
-          type: string
-        rank:
-          type: string
-        status:
-          type: string
-        resellerId:
-          type: string
-        referralCode:
-          type: string
-        personalSales:
-          type: number
-        personalBottles:
-          type: integer
-        teamBottles:
-          type: integer
-        progress:
-          type: integer
-        nextRank:
-          type: string
-        teamLeaders:
-          type: integer
-        activity:
-          type: array
-          items:
-            $ref: "#/components/schemas/Activity"
-        incentive:
-          type: number
+        label: { type: string }
+        current: { type: number }
+        target: { type: number }
+        met: { type: boolean }
     Activity:
       type: object
-      required:
-        - id
-        - label
-        - detail
-        - time
-        - tone
+      required: [id, label, detail, time, tone]
       properties:
-        id:
-          type: string
-        label:
-          type: string
-        detail:
-          type: string
-        time:
-          type: string
-        tone:
-          type: string
-    AdminSummary:
+        id: { type: string }
+        label: { type: string }
+        detail: { type: string }
+        time: { type: string }
+        tone: { type: string }
+    ResellerDashboard:
       type: object
       required:
-        - revenue
-        - bottles
-        - activeResellers
-        - pendingIncentives
-        - weeklySales
-        - topProducts
+        [name, firstName, rank, status, standing, resellerCode, referralCode, referralUrl,
+         period, openingOrderRequired, openingOrderCompleted, personal, team, organisation,
+         nextRank, progress, requirements, warning, incentives, rates, activity, history, referralStats]
       properties:
-        revenue:
-          type: number
-        bottles:
-          type: integer
-        activeResellers:
-          type: integer
-        pendingIncentives:
-          type: number
-        weeklySales:
+        name: { type: string }
+        firstName: { type: string }
+        rank: { type: string }
+        status: { type: string }
+        standing: { type: string }
+        resellerCode: { type: string }
+        referralCode: { type: string }
+        referralUrl: { type: string }
+        period: { type: string }
+        openingOrderRequired: { type: integer }
+        openingOrderCompleted: { type: boolean }
+        personal:
+          type: object
+          required: [bottles, sales, grossMargin, target, progress]
+          properties:
+            bottles: { type: integer }
+            sales: { type: number }
+            grossMargin: { type: number }
+            target: { type: integer }
+            progress: { type: integer }
+        team:
+          type: object
+          required: [activeResellers, inactiveResellers, bottles, sales, target, incentive, qualified]
+          properties:
+            activeResellers: { type: integer }
+            inactiveResellers: { type: integer }
+            bottles: { type: integer }
+            sales: { type: number }
+            target: { type: integer }
+            incentive: { type: number }
+            qualified: { type: boolean }
+        organisation:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/OrganisationStats"
+        nextRank: { type: ["string", "null"] }
+        progress: { type: integer }
+        requirements:
           type: array
-          items:
-            $ref: "#/components/schemas/SalesPoint"
-        topProducts:
+          items: { $ref: "#/components/schemas/Requirement" }
+        warning: { type: ["string", "null"] }
+        incentives:
+          type: object
+          required: [pending, approved, paid]
+          properties:
+            pending: { type: number }
+            approved: { type: number }
+            paid: { type: number }
+        rates:
+          type: object
+          required: [teamLeader, manager, director, directorEnabled]
+          properties:
+            teamLeader: { type: number }
+            manager: { type: number }
+            director: { type: number }
+            directorEnabled: { type: boolean }
+        activity:
           type: array
-          items:
-            $ref: "#/components/schemas/ProductPerformance"
+          items: { $ref: "#/components/schemas/Activity" }
+        history:
+          type: array
+          description: Last six months, oldest first
+          items: { $ref: "#/components/schemas/HistoryPoint" }
+        referralStats:
+          type: object
+          required: [visits, conversions, attributedSales]
+          properties:
+            visits: { type: integer }
+            conversions: { type: integer }
+            attributedSales: { type: number }
+    HistoryPoint:
+      type: object
+      required: [period, personalBottles, teamBottles, orgBottles, incentive]
+      properties:
+        period: { type: string }
+        personalBottles: { type: integer }
+        teamBottles: { type: integer }
+        orgBottles: { type: integer }
+        incentive: { type: number }
+    OrganisationStats:
+      type: object
+      required: [teamLeaders, activeResellers, bottles, sales, target, incentive, qualified]
+      properties:
+        teamLeaders: { type: integer }
+        activeResellers: { type: integer }
+        bottles: { type: integer }
+        sales: { type: number }
+        target: { type: integer }
+        incentive: { type: number }
+        qualified: { type: boolean }
+    TeamMember:
+      type: object
+      required:
+        [id, resellerCode, name, mobile, rank, status, standing, personalBottles, personalSales,
+         teamBottles, directs, lastOrderAt, joinedAt]
+      properties:
+        id: { type: integer }
+        mobile: { type: ["string", "null"] }
+        resellerCode: { type: string }
+        name: { type: string }
+        rank: { type: string }
+        status: { type: string }
+        standing: { type: string }
+        personalBottles: { type: integer }
+        personalSales: { type: number }
+        teamBottles: { type: integer }
+        directs: { type: integer }
+        lastOrderAt: { type: ["string", "null"] }
+        joinedAt: { type: string }
+    Organisation:
+      type: object
+      required: [teamLeaders, totalMembers, activeMembers, orgBottles, orgSales]
+      properties:
+        teamLeaders:
+          type: array
+          items: { $ref: "#/components/schemas/TeamMember" }
+        totalMembers: { type: integer }
+        activeMembers: { type: integer }
+        orgBottles: { type: integer }
+        orgSales: { type: number }
+    LedgerEntry:
+      type: object
+      required:
+        [id, entryType, orderNumber, period, productName, quantity, seller, beneficiary,
+         beneficiaryResellerCode, kind, beneficiaryRank, rate, baseValue, amount,
+         qualificationStatus, status, note, createdAt, paidAt]
+      properties:
+        id: { type: integer }
+        entryType: { type: string }
+        orderNumber: { type: string }
+        period: { type: string }
+        productName: { type: string }
+        quantity: { type: integer }
+        seller: { type: string }
+        beneficiary: { type: string }
+        beneficiaryResellerCode: { type: string }
+        kind: { type: string }
+        beneficiaryRank: { type: string }
+        rate: { type: number }
+        baseValue: { type: number }
+        amount: { type: number }
+        qualificationStatus: { type: string }
+        status: { type: string }
+        note: { type: ["string", "null"] }
+        createdAt: { type: string }
+        paidAt: { type: ["string", "null"] }
+    MarketingMaterial:
+      type: object
+      required: [id, title, category, url, description, minRank, createdAt]
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        category: { type: string }
+        url: { type: string }
+        description: { type: string }
+        minRank: { type: string }
+        createdAt: { type: string }
+    MarketingMaterialInput:
+      type: object
+      required: [title, category, url]
+      properties:
+        title: { type: string, minLength: 1 }
+        category: { type: string, minLength: 1 }
+        url: { type: string, minLength: 1 }
+        description: { type: string }
+        minRank: { type: string }
+
     SalesPoint:
       type: object
-      required:
-        - label
-        - value
+      required: [label, value]
       properties:
-        label:
-          type: string
-        value:
-          type: number
+        label: { type: string }
+        value: { type: number }
     ProductPerformance:
       type: object
-      required:
-        - name
-        - units
-        - revenue
+      required: [name, sku, units, revenue, cost, grossProfit]
       properties:
-        name:
-          type: string
-        units:
-          type: integer
-        revenue:
-          type: number
+        name: { type: string }
+        sku: { type: string }
+        units: { type: integer }
+        revenue: { type: number }
+        cost: { type: number }
+        grossProfit: { type: number }
+    LowStockItem:
+      type: object
+      required: [id, name, sku, available, threshold]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        sku: { type: string }
+        available: { type: integer }
+        threshold: { type: integer }
+    TopSeller:
+      type: object
+      required: [name, resellerCode, rank, bottles, sales]
+      properties:
+        name: { type: string }
+        resellerCode: { type: string }
+        rank: { type: string }
+        bottles: { type: integer }
+        sales: { type: number }
+    AdminSummary:
+      type: object
+      required: [period, sales, products, resellers, organisation, contribution, dailySales, monthlySales, alerts]
+      properties:
+        period: { type: string }
+        sales:
+          type: object
+          required: [today, week, month, lastMonth, year, retailMonth, resellerMonth, wholesaleMonth, ordersToday, ordersMonth, awaitingPayment]
+          properties:
+            today: { type: number }
+            lastMonth: { type: number }
+            week: { type: number }
+            month: { type: number }
+            year: { type: number }
+            retailMonth: { type: number }
+            resellerMonth: { type: number }
+            wholesaleMonth: { type: number }
+            ordersToday: { type: integer }
+            ordersMonth: { type: integer }
+            awaitingPayment: { type: integer }
+        products:
+          type: object
+          required: [unitsSold, revenue, cost, grossProfit, stockUnits, activeProducts, bestSellers, slowSellers, lowStock]
+          properties:
+            unitsSold: { type: integer }
+            revenue: { type: number }
+            cost: { type: number }
+            grossProfit: { type: number }
+            stockUnits: { type: integer }
+            activeProducts: { type: integer }
+            bestSellers:
+              type: array
+              items: { $ref: "#/components/schemas/ProductPerformance" }
+            slowSellers:
+              type: array
+              items: { $ref: "#/components/schemas/ProductPerformance" }
+            lowStock:
+              type: array
+              items: { $ref: "#/components/schemas/LowStockItem" }
+        resellers:
+          type: object
+          required: [total, approved, active, inactive, newThisMonth, pendingApplications, topSellers, topTeams]
+          properties:
+            total: { type: integer }
+            approved: { type: integer }
+            active: { type: integer }
+            inactive: { type: integer }
+            newThisMonth: { type: integer }
+            pendingApplications: { type: integer }
+            topSellers:
+              type: array
+              items: { $ref: "#/components/schemas/TopSeller" }
+            topTeams:
+              type: array
+              items: { $ref: "#/components/schemas/TopSeller" }
+        organisation:
+          type: object
+          required: [teamLeaders, managers, directors, teamVolume, incentivesMonth, incentivesPending, incentivesApproved, incentivesPaid]
+          properties:
+            teamLeaders: { type: integer }
+            managers: { type: integer }
+            directors: { type: integer }
+            teamVolume: { type: integer }
+            incentivesMonth: { type: number }
+            incentivesPending: { type: number }
+            incentivesApproved: { type: number }
+            incentivesPaid: { type: number }
+        contribution:
+          type: object
+          required: [current, target, percent, bottlesSold, bottlesRequired, remaining]
+          properties:
+            current: { type: number }
+            target: { type: number }
+            percent: { type: integer }
+            bottlesSold: { type: integer }
+            bottlesRequired: { type: integer }
+            remaining: { type: integer }
+        dailySales:
+          type: array
+          items: { $ref: "#/components/schemas/SalesPoint" }
+        monthlySales:
+          type: array
+          description: Revenue for the last six months, oldest first
+          items: { $ref: "#/components/schemas/SalesPoint" }
+        alerts:
+          type: object
+          required: [openFraudFlags, newEnquiries, lowStock]
+          properties:
+            openFraudFlags: { type: integer }
+            newEnquiries: { type: integer }
+            lowStock: { type: integer }
+
     AdminSettings:
       type: object
       required:
-        - openingOrder
-        - teamLeaderRate
-        - managerRate
-        - directorRate
-        - personalTarget
-        - teamTarget
+        [openingOrder, reorderMinimum, teamLeaderRate, managerRate, directorRate, directorEnabled,
+         referralRate, countAttributedRetail, personalTarget, teamTarget, tlActiveDirects,
+         mgrActiveTeamLeaders, mgrActiveResellers, mgrOrgBottles, mgrPersonalBottles,
+         dirActiveManagers, dirActiveResellers, dirOrgBottles, activeMinBottles,
+         reactivationBottles, rankGraceMonths, largeOrderBottles, shippingFlatRate,
+         freeShippingThreshold, monthlyContributionTarget]
       properties:
-        openingOrder:
-          type: integer
-        teamLeaderRate:
-          type: number
-        managerRate:
-          type: number
-        directorRate:
-          type: number
-        personalTarget:
-          type: integer
-        teamTarget:
-          type: integer
+        openingOrder: { type: integer }
+        reorderMinimum: { type: integer }
+        teamLeaderRate: { type: number }
+        managerRate: { type: number }
+        directorRate: { type: number }
+        directorEnabled: { type: boolean }
+        referralRate: { type: number }
+        countAttributedRetail: { type: boolean }
+        personalTarget: { type: integer }
+        teamTarget: { type: integer }
+        tlActiveDirects: { type: integer }
+        mgrActiveTeamLeaders: { type: integer }
+        mgrActiveResellers: { type: integer }
+        mgrOrgBottles: { type: integer }
+        mgrPersonalBottles: { type: integer }
+        dirActiveManagers: { type: integer }
+        dirActiveResellers: { type: integer }
+        dirOrgBottles: { type: integer }
+        activeMinBottles: { type: integer }
+        reactivationBottles: { type: integer }
+        rankGraceMonths: { type: integer }
+        largeOrderBottles: { type: integer }
+        shippingFlatRate: { type: number }
+        freeShippingThreshold: { type: number }
+        monthlyContributionTarget: { type: number }
     AdminSettingsInput:
       type: object
-      required:
-        - openingOrder
-        - teamLeaderRate
-        - managerRate
-        - directorRate
-        - personalTarget
-        - teamTarget
       properties:
-        openingOrder:
-          type: integer
-        teamLeaderRate:
-          type: number
-        managerRate:
-          type: number
-        directorRate:
-          type: number
-        personalTarget:
-          type: integer
-        teamTarget:
-          type: integer
+        openingOrder: { type: integer, minimum: 1, maximum: 1000 }
+        reorderMinimum: { type: integer, minimum: 1, maximum: 1000 }
+        teamLeaderRate: { type: number, minimum: 0, maximum: 50 }
+        managerRate: { type: number, minimum: 0, maximum: 50 }
+        directorRate: { type: number, minimum: 0, maximum: 50 }
+        directorEnabled: { type: boolean }
+        referralRate: { type: number, minimum: 0, maximum: 50 }
+        countAttributedRetail: { type: boolean }
+        personalTarget: { type: integer, minimum: 0 }
+        teamTarget: { type: integer, minimum: 0 }
+        tlActiveDirects: { type: integer, minimum: 0 }
+        mgrActiveTeamLeaders: { type: integer, minimum: 0 }
+        mgrActiveResellers: { type: integer, minimum: 0 }
+        mgrOrgBottles: { type: integer, minimum: 0 }
+        mgrPersonalBottles: { type: integer, minimum: 0 }
+        dirActiveManagers: { type: integer, minimum: 0 }
+        dirActiveResellers: { type: integer, minimum: 0 }
+        dirOrgBottles: { type: integer, minimum: 0 }
+        activeMinBottles: { type: integer, minimum: 1 }
+        reactivationBottles: { type: integer, minimum: 1 }
+        rankGraceMonths: { type: integer, minimum: 0, maximum: 12 }
+        largeOrderBottles: { type: integer, minimum: 1 }
+        shippingFlatRate: { type: number, minimum: 0 }
+        freeShippingThreshold: { type: number, minimum: 0 }
+        monthlyContributionTarget: { type: number, minimum: 0 }
 
+    AdminApplication:
+      type: object
+      required:
+        [id, applicationId, name, email, mobile, province, city, contactMethod, heardAbout,
+         referringCode, sponsorName, status, adminNote, createdAt, warnings]
+      properties:
+        id: { type: integer }
+        applicationId: { type: string }
+        name: { type: string }
+        email: { type: string }
+        mobile: { type: string }
+        province: { type: string }
+        city: { type: string }
+        contactMethod: { type: string }
+        heardAbout: { type: string }
+        referringCode: { type: ["string", "null"] }
+        sponsorName: { type: ["string", "null"] }
+        status: { type: string }
+        adminNote: { type: ["string", "null"] }
+        createdAt: { type: string }
+        warnings:
+          type: array
+          items: { type: string }
+    ApplicationDecisionInput:
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approve, reject, request_info] }
+        note: { type: ["string", "null"] }
+    AdminReseller:
+      type: object
+      required:
+        [id, resellerCode, referralCode, name, email, mobile, rank, rankLocked, status, standing,
+         sponsor, sponsorCode, openingOrderCompleted, personalBottles, teamBottles, directs,
+         approvedAt, lastOrderAt]
+      properties:
+        id: { type: integer }
+        resellerCode: { type: string }
+        referralCode: { type: string }
+        name: { type: string }
+        email: { type: string }
+        mobile: { type: ["string", "null"] }
+        rank: { type: string }
+        rankLocked: { type: boolean }
+        status: { type: string }
+        standing: { type: string }
+        sponsor: { type: ["string", "null"] }
+        sponsorCode: { type: ["string", "null"] }
+        openingOrderCompleted: { type: boolean }
+        personalBottles: { type: integer }
+        teamBottles: { type: integer }
+        directs: { type: integer }
+        approvedAt: { type: string }
+        lastOrderAt: { type: ["string", "null"] }
+    AdminResellerUpdate:
+      type: object
+      properties:
+        standing: { type: string, enum: [good, review, hold, suspended] }
+        rank: { type: string, enum: [reseller, team_leader, manager, director] }
+        rankLocked: { type: boolean }
+        sponsorCode: { type: ["string", "null"] }
+    AdminCustomer:
+      type: object
+      required: [id, name, email, mobile, role, accountStatus, orders, totalSpent, createdAt, duplicateOf]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string }
+        mobile: { type: ["string", "null"] }
+        role: { type: string }
+        accountStatus: { type: string }
+        orders: { type: integer }
+        totalSpent: { type: number }
+        createdAt: { type: string }
+        duplicateOf: { type: ["string", "null"] }
+    AdminCustomerUpdate:
+      type: object
+      properties:
+        accountStatus: { type: string, enum: [active, review, hold, suspended] }
+        role: { type: string, enum: [customer, reseller, admin] }
+    TeamNode:
+      type: object
+      required:
+        [id, sponsorId, depth, resellerCode, name, rank, status, standing, personalBottles,
+         teamBottles, orgBottles, directs]
+      properties:
+        id: { type: integer }
+        sponsorId: { type: ["integer", "null"] }
+        depth: { type: integer }
+        resellerCode: { type: string }
+        name: { type: string }
+        rank: { type: string }
+        status: { type: string }
+        standing: { type: string }
+        personalBottles: { type: integer }
+        teamBottles: { type: integer }
+        orgBottles: { type: integer }
+        directs: { type: integer }
+
+    AdminProduct:
+      type: object
+      required:
+        [id, slug, sku, name, category, family, description, scentProfile, topNotes, middleNotes,
+         baseNotes, keywords, image, imageAlt, size, retailPrice, recommendedRetailPrice,
+         resellerPrice, cost, stockQuantity, reservedQuantity, soldQuantity, available,
+         lowStockThreshold, isBestSeller, isNew, isFeatured, status, shopifyVariantId]
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        sku: { type: string }
+        name: { type: string }
+        category: { type: string }
+        family: { type: string }
+        description: { type: string }
+        scentProfile: { type: string }
+        topNotes: { type: array, items: { type: string } }
+        middleNotes: { type: array, items: { type: string } }
+        baseNotes: { type: array, items: { type: string } }
+        keywords: { type: string }
+        image: { type: string }
+        imageAlt: { type: string }
+        size: { type: string }
+        retailPrice: { type: number }
+        recommendedRetailPrice: { type: number }
+        resellerPrice: { type: number }
+        cost: { type: number }
+        stockQuantity: { type: integer }
+        reservedQuantity: { type: integer }
+        soldQuantity: { type: integer }
+        available: { type: integer }
+        lowStockThreshold: { type: integer }
+        isBestSeller: { type: boolean }
+        isNew: { type: boolean }
+        isFeatured: { type: boolean }
+        status: { type: string }
+        shopifyVariantId: { type: ["string", "null"] }
+    ProductInput:
+      type: object
+      required: [sku, name, category, family, size, retailPrice, resellerPrice, cost]
+      properties:
+        slug: { type: string }
+        sku: { type: string, minLength: 2 }
+        name: { type: string, minLength: 1 }
+        category: { type: string, minLength: 1 }
+        family: { type: string, minLength: 1 }
+        description: { type: string }
+        scentProfile: { type: string }
+        topNotes: { type: array, items: { type: string } }
+        middleNotes: { type: array, items: { type: string } }
+        baseNotes: { type: array, items: { type: string } }
+        keywords: { type: string }
+        image: { type: string }
+        imageAlt: { type: string }
+        size: { type: string, enum: [50ml, 100ml] }
+        retailPrice: { type: number, minimum: 0 }
+        recommendedRetailPrice: { type: number, minimum: 0 }
+        resellerPrice: { type: number, minimum: 0 }
+        cost: { type: number, minimum: 0 }
+        stockQuantity: { type: integer, minimum: 0 }
+        lowStockThreshold: { type: integer, minimum: 0 }
+        isBestSeller: { type: boolean }
+        isNew: { type: boolean }
+        isFeatured: { type: boolean }
+        status: { type: string, enum: [active, inactive] }
+        shopifyVariantId: { type: ["string", "null"] }
+    ProductUpdate:
+      type: object
+      properties:
+        sku: { type: string, minLength: 2 }
+        name: { type: string, minLength: 1 }
+        category: { type: string, minLength: 1 }
+        family: { type: string, minLength: 1 }
+        description: { type: string }
+        scentProfile: { type: string }
+        topNotes: { type: array, items: { type: string } }
+        middleNotes: { type: array, items: { type: string } }
+        baseNotes: { type: array, items: { type: string } }
+        keywords: { type: string }
+        image: { type: string }
+        imageAlt: { type: string }
+        size: { type: string, enum: [50ml, 100ml] }
+        retailPrice: { type: number, minimum: 0 }
+        recommendedRetailPrice: { type: number, minimum: 0 }
+        resellerPrice: { type: number, minimum: 0 }
+        cost: { type: number, minimum: 0 }
+        stockQuantity: { type: integer, minimum: 0 }
+        lowStockThreshold: { type: integer, minimum: 0 }
+        isBestSeller: { type: boolean }
+        isNew: { type: boolean }
+        isFeatured: { type: boolean }
+        status: { type: string, enum: [active, inactive] }
+        shopifyVariantId: { type: ["string", "null"] }
+    AdminOrderUpdate:
+      type: object
+      properties:
+        status: { type: string, enum: [paid, processing, shipped, delivered] }
+        courier: { type: ["string", "null"] }
+        trackingNumber: { type: ["string", "null"] }
+        attributedReferralCode: { type: ["string", "null"], description: Manual attribution by administrator }
+        notes: { type: ["string", "null"] }
+    RefundInput:
+      type: object
+      required: [type, reason]
+      properties:
+        type: { type: string, enum: [refund, cancel, return, chargeback] }
+        reason: { type: string, minLength: 2 }
+        items:
+          type: array
+          description: Omit to refund/cancel the entire order
+          items:
+            type: object
+            required: [orderItemId, quantity]
+            properties:
+              orderItemId: { type: integer }
+              quantity: { type: integer, minimum: 1 }
+    Payout:
+      type: object
+      required: [id, payoutNumber, resellerName, resellerCode, amount, entryCount, reference, createdAt]
+      properties:
+        id: { type: integer }
+        payoutNumber: { type: string }
+        resellerName: { type: string }
+        resellerCode: { type: string }
+        amount: { type: number }
+        entryCount: { type: integer }
+        reference: { type: ["string", "null"] }
+        createdAt: { type: string }
+    PayoutInput:
+      type: object
+      properties:
+        resellerIds:
+          type: array
+          items: { type: integer }
+        reference: { type: ["string", "null"] }
+    QualificationRunInput:
+      type: object
+      required: [period]
+      properties:
+        period: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$" }
+    QualificationRow:
+      type: object
+      required:
+        [resellerId, resellerCode, name, personalBottles, teamBottles, orgBottles, activeDirects,
+         activeTeamLeaders, orgActiveResellers, isActive, qualifiedRank, rankBefore, rankAfter, warning]
+      properties:
+        resellerId: { type: integer }
+        resellerCode: { type: string }
+        name: { type: string }
+        personalBottles: { type: integer }
+        teamBottles: { type: integer }
+        orgBottles: { type: integer }
+        activeDirects: { type: integer }
+        activeTeamLeaders: { type: integer }
+        orgActiveResellers: { type: integer }
+        isActive: { type: boolean }
+        qualifiedRank: { type: string }
+        rankBefore: { type: string }
+        rankAfter: { type: string }
+        warning: { type: boolean }
+    QualificationResult:
+      type: object
+      required: [period, status, runAt, promotions, demotions, warnings, activeResellers, ledgerQualified, ledgerVoided, rows]
+      properties:
+        period: { type: string }
+        status: { type: string }
+        runAt: { type: ["string", "null"] }
+        promotions: { type: integer }
+        demotions: { type: integer }
+        warnings: { type: integer }
+        activeResellers: { type: integer }
+        ledgerQualified: { type: integer }
+        ledgerVoided: { type: integer }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/QualificationRow" }
+    FraudFlag:
+      type: object
+      required: [id, type, severity, detail, status, createdAt, resellerCode, orderNumber, userEmail, resellerId, userId]
+      properties:
+        id: { type: integer }
+        type: { type: string }
+        severity: { type: string }
+        detail: { type: string }
+        status: { type: string }
+        createdAt: { type: string }
+        resellerId: { type: ["integer", "null"] }
+        resellerCode: { type: ["string", "null"] }
+        orderNumber: { type: ["string", "null"] }
+        userId: { type: ["integer", "null"] }
+        userEmail: { type: ["string", "null"] }
+    Enquiry:
+      type: object
+      required:
+        [id, kind, companyName, contactPerson, email, phone, quantity, productPreference,
+         requiredDate, deliveryLocation, brandingRequirements, message, status, createdAt]
+      properties:
+        id: { type: integer }
+        kind: { type: string }
+        companyName: { type: ["string", "null"] }
+        contactPerson: { type: string }
+        email: { type: string }
+        phone: { type: ["string", "null"] }
+        quantity: { type: ["integer", "null"] }
+        productPreference: { type: ["string", "null"] }
+        requiredDate: { type: ["string", "null"] }
+        deliveryLocation: { type: ["string", "null"] }
+        brandingRequirements: { type: ["string", "null"] }
+        message: { type: string }
+        status: { type: string }
+        createdAt: { type: string }
+    AuditLog:
+      type: object
+      required: [id, action, actorId, entityType, entityId, metadata, createdAt]
+      properties:
+        id: { type: integer }
+        action: { type: string }
+        actorId: { type: ["string", "null"] }
+        entityType: { type: string }
+        entityId: { type: ["string", "null"] }
+        metadata: { type: ["string", "null"] }
+        createdAt: { type: string }
+    ReportType:
+      type: string
+      enum: [daily, weekly, monthly, products, resellers, teams, commissions, orders]
+    Report:
+      type: object
+      required: [title, columns, rows]
+      properties:
+        title: { type: string }
+        columns:
+          type: array
+          items: { type: string }
+        rows:
+          type: array
+          items:
+            type: array
+            items: { type: string }

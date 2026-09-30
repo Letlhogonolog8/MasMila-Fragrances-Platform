@@ -1,0 +1,43 @@
+# Netlify: static storefront + the Express API as a single Netlify Function.
+# Environment variables (set in Netlify → Site configuration → Environment):
+#   DATABASE_URL     Postgres connection string — or add the Netlify DB extension,
+#                    which provides NETLIFY_DATABASE_URL automatically
+#   SITE_URL         https://<your-site>.netlify.app
+#   SEED_DEMO_DATA   "true" for the client demo (seeds the demo network)
+#   DEMO_AUTH        "true" for the client demo only (anyone can sign in as any seeded account)
+#   CLERK_SECRET_KEY / VITE_CLERK_PUBLISHABLE_KEY for real sign-in (then drop DEMO_AUTH)
+
+[build]
+  # Syncs the database schema, then builds the storefront and the API function.
+  # (push-force suits this demo deployment; use reviewed migrations for production.)
+  command = "pnpm --filter @workspace/db run push-force && pnpm --filter @workspace/masmila-fragrances run build && pnpm --filter @workspace/api-server run build:netlify"
+  publish = "artifacts/masmila-fragrances/dist/public"
+
+[build.environment]
+  NODE_VERSION = "22"
+  # Required by vite.config.ts
+  PORT = "5173"
+  BASE_PATH = "/"
+
+[functions]
+  directory = "netlify/functions"
+  # Already bundled by esbuild in the build command.
+  node_bundler = "none"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Client-demo deployment: keep it out of search engines (it shows placeholder
+# brand photography). Remove before the public launch.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"

@@ -41,7 +41,20 @@ function getOpenIntConnectionConfig() {
   return { connectionUrl: connectionUrl.toString(), token };
 }
 
+/** Direct credentials (any host) take precedence over the Replit connector. */
+function getEnvConfig(): ShopifyStorefrontConfig | null {
+  const shopDomain = process.env.SHOPIFY_STORE_DOMAIN;
+  const storefrontAccessToken = process.env.SHOPIFY_STOREFRONT_TOKEN;
+  return shopDomain && storefrontAccessToken ? { shopDomain, storefrontAccessToken } : null;
+}
+
+export function isShopifyConfigured() {
+  return Boolean(getEnvConfig() || process.env.REPLIT_CONNECTORS_HOSTNAME);
+}
+
 async function getShopifyStorefrontConfig(options: { forceRefresh?: boolean } = {}) {
+  const envConfig = getEnvConfig();
+  if (envConfig) return envConfig;
   if (cachedConfig && !options.forceRefresh && Date.now() < cachedConfig.expiresAt) {
     return cachedConfig.value;
   }
@@ -111,4 +124,45 @@ export async function shopifyStorefrontRequest<T>(
     );
   }
   return json.data as T;
+}
+
+type CartCreateResponse = {
+  cartCreate: {
+    cart: { id: string; checkoutUrl: string } | null;
+    userErrors: Array<{ field: string[] | null; message: string }>;
+  };
+};
+
+/**
+ * Create a Shopify cart for hosted checkout (payments + delivery rates are
+ * configured in Shopify admin). The Mas'Mila order number and referral code
+ * travel as cart attributes and come back on the order webhook.
+ */
+export async function createShopifyCheckout(input: {
+  lines: Array<{ merchandiseId: string; quantity: number }>;
+  email: string;
+  attributes: Record<string, string>;
+}) {
+  const data = await shopifyStorefrontRequest<CartCreateResponse>(
+    `#graphql
+      mutation CartCreate($input: CartInput!) {
+        cartCreate(input: $input) {
+          cart { id checkoutUrl }
+          userErrors { field message }
+        }
+      }
+    `,
+    {
+      input: {
+        lines: input.lines,
+        buyerIdentity: { email: input.email, countryCode: "ZA" },
+        attributes: Object.entries(input.attributes).map(([key, value]) => ({ key, value })),
+      },
+    },
+  );
+  const { cart, userErrors } = data.cartCreate;
+  if (!cart || userErrors.length) {
+    throw new Error(`Shopify cartCreate failed: ${userErrors.map((e) => e.message).join("; ")}`);
+  }
+  return cart.checkoutUrl;
 }

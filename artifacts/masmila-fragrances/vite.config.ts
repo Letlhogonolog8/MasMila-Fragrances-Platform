@@ -27,11 +27,17 @@ if (!basePath) {
   );
 }
 
+// Replit routes /api to the API service. Elsewhere (local dev/preview), set
+// API_PROXY_TARGET=http://localhost:8080 to proxy it instead.
+const apiProxy = process.env.API_PROXY_TARGET
+  ? { '/api': { target: process.env.API_PROXY_TARGET, changeOrigin: true } }
+  : undefined;
+
 export default defineConfig({
   base: basePath,
   plugins: [
     react(),
-    tailwindcss(),
+    tailwindcss({ optimize: false }),
     runtimeErrorOverlay(),
     ...(process.env.NODE_ENV !== 'production' &&
     process.env.REPL_ID !== undefined
@@ -69,6 +75,9 @@ export default defineConfig({
     strictPort: true,
     host: '0.0.0.0',
     allowedHosts: true,
+    proxy: apiProxy,
+    // Needed for hot reload in a container over a Windows bind mount.
+    watch: process.env.CHOKIDAR_USEPOLLING === 'true' ? { usePolling: true, interval: 300 } : undefined,
     fs: {
       strict: true,
     },
@@ -77,5 +86,6 @@ export default defineConfig({
     port,
     host: '0.0.0.0',
     allowedHosts: true,
+    proxy: apiProxy,
   },
 });

@@ -1,2 +1,9 @@
 User-agent: *
 Allow: /
+Disallow: /account
+Disallow: /admin
+Disallow: /cart
+Disallow: /checkout
+Disallow: /order/
+
+Sitemap: https://masmila.co.za/api/sitemap.xml

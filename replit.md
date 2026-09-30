@@ -1,54 +1,62 @@
 # Mas'Mila Fragrances
 
-Mas'Mila is a South African fragrance storefront with a reseller application flow and leadership dashboard foundation.
+South African fragrance storefront + reseller portal + team/commission engine + admin console, built from the Mas'Mila proposal. See `docs/IMPLEMENTATION.md` for section-by-section coverage of the proposal.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/api-server run dev` — build + run the API (needs `PORT`, `DATABASE_URL`)
+- `pnpm --filter @workspace/masmila-fragrances run dev` — storefront (needs `PORT`, `BASE_PATH`; set `API_PROXY_TARGET=http://localhost:<api port>` when not behind the Replit router)
+- `pnpm --filter @workspace/api-server test` — commission/qualification engine tests
+- `pnpm run typecheck` / `pnpm run build`
+- `pnpm --filter @workspace/api-spec run codegen` — regenerate hooks + Zod after editing `lib/api-spec/openapi.yaml`
+- `pnpm --filter @workspace/db run push` — push schema (use `push-force` if drizzle-kit asks about renamed columns)
+
+## Environment
+
+| Variable | Where | Purpose |
+|---|---|---|
+| `DATABASE_URL` | API | Postgres |
+| `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY`, `VITE_CLERK_PUBLISHABLE_KEY` | API / web | Authentication. Without them, a **demo sign-in** (seeded accounts) is available outside production only. |
+| `ADMIN_EMAILS` | API | Comma-separated emails that are always administrators |
+| `SITE_URL` | API | Public URL for referral links, sitemap, emails (default `https://masmila.co.za`) |
+| `SEED_DEMO_DATA` | API | `true` seeds the demo network in production; `false` disables it in development |
+| `RESEND_API_KEY`, `NOTIFY_FROM_EMAIL` | API | Email delivery for notifications (in-app notifications always work) |
+| `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_STOREFRONT_TOKEN` (or the Replit Shopify connector), `SHOPIFY_WEBHOOK_SECRET` | API | Shopify hosted checkout + order/refund webhooks at `/api/webhooks/shopify` |
+| `CORS_ORIGINS` | API | Only if the API must be called from another origin |
+| `VITE_GA_MEASUREMENT_ID`, `VITE_META_PIXEL_ID`, `VITE_TIKTOK_PIXEL_ID`, `VITE_GOOGLE_SITE_VERIFICATION` | web | Analytics (loaded after cookie consent) |
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- pnpm workspaces, Node.js 24, TypeScript 5.9; Express 5 API; React 19 + Vite + wouter + TanStack Query storefront
+- PostgreSQL + Drizzle ORM; OpenAPI → Orval (React Query hooks + Zod validators)
+- Clerk authentication; Shopify Storefront API for hosted checkout
 
 ## Where things live
 
-- `artifacts/masmila-fragrances` — React storefront, shop, reseller application, reseller portal, and admin dashboard.
-- `artifacts/api-server/src/routes/masmila.ts` — typed demo API for product discovery, reseller applications, portal data, admin summaries, and compensation settings.
-- `lib/api-spec/openapi.yaml` — source of truth for the Mas'Mila API contract.
-- `lib/api-client-react/src/generated` — generated frontend hooks and schemas; regenerate with the API spec command after contract changes.
+- `lib/db/src/schema/masmila.ts` — data model: users, resellers (sponsor/upline), products (cost + reseller price private), orders/items, qualification periods, commission ledger, payouts, settings, audit logs, notifications, fraud flags, marketing, enquiries, wishlist, site content
+- `artifacts/api-server/src/lib/engine.ts` — pure qualification/rank/incentive rules (tested in `engine.test.ts`)
+- `artifacts/api-server/src/lib/network.ts` — volumes, live network evaluation, ledger accrual/reversal, month-end run
+- `artifacts/api-server/src/lib/orders.ts` — checkout, payment, fulfilment, refunds/cancellations
+- `artifacts/api-server/src/routes/` — `catalog`, `checkout`, `account`, `reseller`, `admin`, `webhooks`, `seo`
+- `artifacts/masmila-fragrances/src/pages/` — storefront, content pages, account, reseller portal, admin console
 
 ## Architecture decisions
 
-- The initial build prioritizes the Phase 1 product surface from the proposal: public shopping, reseller onboarding, referral-ready portal views, and configurable incentive settings.
-- Storefront and dashboard data flow through the shared OpenAPI-generated client, keeping the UI ready for a persistent Shopify/Postgres implementation.
-- The proposal's 5% Team Leader, 2% Manager, and 1% Director rates are represented as editable settings rather than hard-coded UI copy.
-- The current API uses seeded in-memory data so the product can be reviewed immediately; production Shopify, payments, courier, auth, and commission-ledger integrations remain follow-on work.
+- Postgres is the source of truth for products, pricing and the reseller/commission system (a proper data model, not spreadsheets or metafields); Shopify is used for hosted checkout when configured, with EFT checkout otherwise.
+- Every compensation/qualification rule lives in `compensation_settings` and is editable in Admin → Settings; nothing is hard-coded.
+- Incentives accrue provisionally when an order is paid, are confirmed or voided by the month-end qualification run, and flow Pending → Approved → Paid. Refunds reverse unpaid accruals or create clawback rows; nothing is deleted.
+- Incentives are only calculated on product sales (never recruitment). A unique index prevents duplicate claims.
 
-## Product
+## Gotchas
 
-- Public home page, shop catalog, search/filtering, product cards, bag interaction, and brand story pages.
-- Reseller application form with approval-queue response state.
-- Reseller portal with rank, sales, bottle volume, team progress, referral code, recent activity, and incentive visibility.
-- Admin dashboard with revenue, bottles, active resellers, weekly sales, top products, and editable compensation settings.
+- Run codegen after editing `openapi.yaml`.
+- API routes live behind `/api`; the web artifact is served at `/`.
+- Month-end qualification is run from Admin → Incentives & payouts (idempotent; safe to re-run).
+- Windows development: the workspace strips non-Linux native binaries (esbuild/rollup/tailwind), so build the web app on Linux/Replit.
 
 ## User preferences
 
 None recorded.
-
-## Gotchas
-
-- Run `pnpm --filter @workspace/api-spec run codegen` after editing `lib/api-spec/openapi.yaml`.
-- API routes live behind `/api`; the web artifact is served at `/`.
 
 ## Pointers
 
