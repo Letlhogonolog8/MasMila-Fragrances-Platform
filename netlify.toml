@@ -15,6 +15,7 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  PNPM_VERSION = "10.15.0"
   # Required by vite.config.ts
   PORT = "5173"
   BASE_PATH = "/"
