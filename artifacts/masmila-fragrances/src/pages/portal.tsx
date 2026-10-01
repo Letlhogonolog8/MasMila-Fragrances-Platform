@@ -2,7 +2,7 @@ import { imageFor } from '@/lib/bottle';
 import { useMemo, useState } from 'react';
 import { Link, useLocation, useSearch } from 'wouter';
 import {
-  AlertTriangle, Award, BadgeDollarSign, Bell, Crown, ExternalLink, Gauge, Megaphone, MessageCircle, Minus, Network,
+  AlertTriangle, Award, BadgeDollarSign, Download, Bell, Crown, ExternalLink, Gauge, Megaphone, MessageCircle, Minus, Network,
   Package, Plus, QrCode as QrIcon, Search, ShoppingBag, Sparkles, Target, TrendingUp, Users, Zap,
 } from 'lucide-react';
 import {
@@ -22,6 +22,7 @@ import {
   useListResellerIncentives,
   useListResellerSales,
   useListResellerTeam,
+  type Organisation,
   type ResellerDashboard,
   type TeamMember,
 } from '@workspace/api-client-react';
@@ -31,7 +32,7 @@ import { useStoreConfig } from '@/components/site';
 import { useMe } from '@/lib/auth';
 import { useCart } from '@/lib/cart';
 import { toast } from '@/hooks/use-toast';
-import { dateOnly, dateTime, humanise, money, periodLabel, rankLabel } from '@/lib/format';
+import { bulkDiscount, dateOnly, dateTime, discounted, humanise, money, periodLabel, rankLabel } from '@/lib/format';
 import { useSeo } from '@/lib/seo';
 import { referralUrl } from '@/lib/referral';
 import { NotificationsList } from './account';
@@ -132,7 +133,8 @@ function QuickOrder({ d }: { d: ResellerDashboard }) {
   const list = useMemo(() => (products.data ?? []).filter((p) => `${p.name} ${p.sku} ${p.family} ${p.size}`.toLowerCase().includes(filter.toLowerCase())), [products.data, filter]);
   const chosen = (products.data ?? []).filter((p) => (qty[p.id] ?? 0) > 0);
   const bottles = chosen.reduce((s, p) => s + (qty[p.id] ?? 0), 0);
-  const cost = chosen.reduce((s, p) => s + (p.resellerPrice ?? p.price) * (qty[p.id] ?? 0), 0);
+  const bulk = bulkDiscount(config.data?.bulkDiscountTiers, bottles);
+  const cost = chosen.reduce((s, p) => s + discounted(p.resellerPrice ?? p.price, bulk.percent) * (qty[p.id] ?? 0), 0);
   const retail = chosen.reduce((s, p) => s + p.price * (qty[p.id] ?? 0), 0);
   const set = (id: number, n: number) => setQty((q) => ({ ...q, [id]: Math.max(0, Math.min(500, n)) }));
 
@@ -178,7 +180,11 @@ function QuickOrder({ d }: { d: ResellerDashboard }) {
           <div className="lb-line"><strong>{bottles} / {minimum} bottles</strong><span>{bottles >= minimum ? 'Minimum met' : `${minimum - bottles} to go`}</span></div>
           <Meter value={bottles} max={minimum} tone={bottles >= minimum ? 'good' : 'primary'} />
         </div>
-        <div className="qo-totals"><small>You pay</small><strong>{money(cost)}</strong><small className="ok-text">Retail value {money(retail)} · margin {money(retail - cost)}</small></div>
+        <div className="qo-totals">
+          <small>You pay{bulk.percent ? ` · bulk ${bulk.percent}% off` : ''}</small><strong>{money(cost)}</strong>
+          <small className="ok-text">Retail value {money(retail)} · margin {money(retail - cost)}</small>
+          {bulk.next ? <small data-testid="text-next-tier">Add {bulk.next.minBottles - bottles} more for {bulk.next.percent}% off</small> : null}
+        </div>
         <button className="btn-primary" disabled={bottles < minimum} onClick={checkout} data-testid="button-quick-checkout"><ShoppingBag size={15} /> Checkout</button>
       </div>
     </div>
@@ -241,6 +247,35 @@ function TeamTab({ d }: { d: ResellerDashboard }) {
   );
 }
 
+/** Manager performance report: 6-month trend plus every leader in the organisation, as CSV (opens in Excel). */
+function downloadOrgReport(d: ResellerDashboard, o: Organisation) {
+  const cell = (v: string | number) => {
+    const text = String(v);
+    return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+  };
+  const rows: Array<Array<string | number>> = [
+    [`Mas'Mila organisation report — ${d.name} (${d.resellerCode})`],
+    [`Period`, periodLabel(d.period)],
+    [],
+    ['Month', 'Personal bottles', 'Team bottles', 'Organisation bottles', 'Incentives (R)'],
+    ...d.history.map((h) => [periodLabel(h.period), h.personalBottles, h.teamBottles, h.orgBottles, h.incentive.toFixed(2)]),
+    [],
+    ['Organisation this month', '', '', o.orgBottles, ''],
+    ['Organisation sales (R)', o.orgSales.toFixed(2)],
+    ['Active resellers', `${o.activeMembers} of ${o.totalMembers}`],
+    [],
+    ['Leader', 'Reseller ID', 'Rank', 'Status', 'Personal bottles', 'Team bottles', 'Directs', 'Last order'],
+    ...o.teamLeaders.map((t) => [t.name, t.resellerCode, t.rank, t.status, t.personalBottles, t.teamBottles, t.directs, t.lastOrderAt ? t.lastOrderAt.slice(0, 10) : '']),
+  ];
+  const csv = '﻿' + rows.map((r) => r.map(cell).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `masmila-organisation-${d.period}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function OrganisationTab({ d }: { d: ResellerDashboard }) {
   const org = useGetResellerOrganisation({ query: { queryKey: getGetResellerOrganisationQueryKey() } });
   if (org.isLoading) return <LoadingBlock />;
@@ -259,7 +294,8 @@ function OrganisationTab({ d }: { d: ResellerDashboard }) {
       <section className="dash-card"><h2>Qualification</h2>
         <div className="req-rings">{reqs.map((r) => <Ring key={r.label} size={84} stroke={8} tone={r.met ? 'good' : 'primary'} value={r.target ? (r.current / r.target) * 100 : 100} label={`${r.current}/${r.target}`} sub={r.label.replace(/^.*· /, '')} />)}</div>
       </section>
-      <section className="dash-card"><div className="card-head"><h2>Team Leaders</h2><span className="muted small-text">Team volume vs {d.team.target}-bottle target</span></div>
+      <section className="dash-card"><div className="card-head"><h2>Team Leaders</h2><span className="muted small-text">Team volume vs {d.team.target}-bottle target</span>
+        <button className="btn-ghost small" onClick={() => downloadOrgReport(d, o)} data-testid="button-org-report"><Download size={14} /> Performance report (CSV)</button></div>
         {o.teamLeaders.length ? (
           <div className="org-grid">
             {o.teamLeaders.map((tl) => {

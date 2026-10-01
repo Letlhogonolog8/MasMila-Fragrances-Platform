@@ -76,4 +76,6 @@ export interface AdminSettingsInput {
   freeShippingThreshold?: number;
   /** @minimum 0 */
   monthlyContributionTarget?: number;
+  /** @pattern ^$|^[0-9]+:[0-9]+([.][0-9]+)?(,[0-9]+:[0-9]+([.][0-9]+)?)*$ */
+  bulkDiscountTiers?: string;
 }

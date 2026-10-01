@@ -52,6 +52,26 @@ export async function notifyUser(
   }
 }
 
+/** One notification to many users (campaigns/announcements): a single insert, emails sent in the background. */
+export async function notifyMany(
+  recipients: Array<{ id: number; email: string }>,
+  type: string,
+  title: string,
+  body: string,
+  link?: string,
+) {
+  if (!recipients.length) return 0;
+  for (let i = 0; i < recipients.length; i += 500) {
+    await db.insert(notificationsTable).values(
+      recipients.slice(i, i + 500).map((r) => ({ userId: r.id, type, title, body, link: link ?? null })),
+    );
+  }
+  void (async () => {
+    for (const r of recipients) await sendEmail(r.email, `Mas'Mila · ${title}`, `${body}${link ? `\n\n${siteUrl()}${link}` : ""}`);
+  })();
+  return recipients.length;
+}
+
 export async function notifyAdmins(type: string, title: string, body: string, link?: string) {
   try {
     await db.insert(notificationsTable).values({ audience: "admin", type, title, body, link: link ?? null });

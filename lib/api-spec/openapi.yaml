@@ -771,6 +771,22 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MarketingMaterial" }
   /admin/marketing-materials/{id}:
+    patch:
+      operationId: updateMarketingMaterial
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MarketingMaterialUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MarketingMaterial" }
     delete:
       operationId: deleteMarketingMaterial
       tags: [admin]
@@ -782,6 +798,38 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Ok" }
+  /admin/announcements:
+    post:
+      operationId: sendAnnouncement
+      tags: [admin]
+      summary: Promotional campaign / announcement to customers, resellers or a rank
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnnouncementInput" }
+      responses:
+        "200":
+          description: Number of recipients
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CountResult" }
+  /admin/files:
+    post:
+      operationId: uploadFile
+      tags: [admin]
+      summary: Upload a file (base64, max 4 MB) for marketing materials or product images
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FileUploadInput" }
+      responses:
+        "201":
+          description: Uploaded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadedFile" }
   /admin/audit-logs:
     get:
       operationId: listAuditLogs
@@ -856,7 +904,7 @@ components:
       type: object
       required:
         [currency, shippingFlatRate, freeShippingThreshold, openingOrder, reorderMinimum,
-         whatsappNumber, shopifyCheckoutEnabled, bankDetails, authMode, siteUrl]
+         whatsappNumber, shopifyCheckoutEnabled, bankDetails, authMode, siteUrl, bulkDiscountTiers]
       properties:
         currency: { type: string }
         shippingFlatRate: { type: number }
@@ -868,6 +916,7 @@ components:
         bankDetails: { type: string }
         authMode: { type: string, enum: [clerk, demo, none] }
         siteUrl: { type: string }
+        bulkDiscountTiers: { type: string, description: 'Reseller bulk pricing, "minBottles:percentOff" pairs, e.g. "50:5,100:10"' }
 
     Product:
       type: object
@@ -1402,6 +1451,40 @@ components:
         description: { type: string }
         minRank: { type: string }
 
+    MarketingMaterialUpdate:
+      type: object
+      properties:
+        title: { type: string, minLength: 1 }
+        category: { type: string, minLength: 1 }
+        url: { type: string, minLength: 1 }
+        description: { type: string }
+        minRank: { type: string }
+    AnnouncementInput:
+      type: object
+      required: [audience, title, body]
+      properties:
+        audience: { type: string, enum: [everyone, customers, resellers, team_leaders, managers] }
+        title: { type: string, minLength: 2, maxLength: 120 }
+        body: { type: string, minLength: 2, maxLength: 2000 }
+        link: { type: ["string", "null"] }
+        marketingOnly:
+          type: boolean
+          description: Customers only receive it if they opted in to marketing (POPIA)
+    FileUploadInput:
+      type: object
+      required: [name, contentType, data]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        contentType: { type: string, minLength: 3 }
+        data: { type: string, minLength: 1, description: Base64-encoded file content }
+    UploadedFile:
+      type: object
+      required: [id, url, name, size]
+      properties:
+        id: { type: integer }
+        url: { type: string }
+        name: { type: string }
+        size: { type: integer }
     SalesPoint:
       type: object
       required: [label, value]
@@ -1536,8 +1619,9 @@ components:
          mgrActiveTeamLeaders, mgrActiveResellers, mgrOrgBottles, mgrPersonalBottles,
          dirActiveManagers, dirActiveResellers, dirOrgBottles, activeMinBottles,
          reactivationBottles, rankGraceMonths, largeOrderBottles, shippingFlatRate,
-         freeShippingThreshold, monthlyContributionTarget]
+         freeShippingThreshold, monthlyContributionTarget, bulkDiscountTiers]
       properties:
+        bulkDiscountTiers: { type: string }
         openingOrder: { type: integer }
         reorderMinimum: { type: integer }
         teamLeaderRate: { type: number }
@@ -1591,6 +1675,7 @@ components:
         shippingFlatRate: { type: number, minimum: 0 }
         freeShippingThreshold: { type: number, minimum: 0 }
         monthlyContributionTarget: { type: number, minimum: 0 }
+        bulkDiscountTiers: { type: string, pattern: '^$|^[0-9]+:[0-9]+([.][0-9]+)?(,[0-9]+:[0-9]+([.][0-9]+)?)*$' }
 
     AdminApplication:
       type: object

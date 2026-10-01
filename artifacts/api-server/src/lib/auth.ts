@@ -1,8 +1,8 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { clerkClient, getAuth } from "@clerk/express";
 import { db, resellersTable, usersTable, type Reseller, type User } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
-import { adminEmails } from "./notify";
+import { eq, getTableColumns, sql } from "drizzle-orm";
+import { adminEmails, notifyUser } from "./notify";
 import { forbidden, HttpError } from "./http";
 import { logger } from "./logger";
 
@@ -57,8 +57,19 @@ async function upsertUserByEmail(
         surname: sql`case when ${usersTable.surname} = '' then ${details.surname ?? ""} else ${usersTable.surname} end`,
       },
     })
-    .returning();
-  return row!;
+    // xmax = 0 only for a freshly inserted row, i.e. a brand-new account.
+    .returning({ ...getTableColumns(usersTable), created: sql<boolean>`(xmax = 0)` });
+  const { created, ...user } = row!;
+  if (created) {
+    await notifyUser(
+      user.id,
+      "account_created",
+      "Welcome to Mas'Mila",
+      "Your account is ready. Track orders, save your address and build a wishlist — or apply to become a reseller.",
+      "/account",
+    );
+  }
+  return user;
 }
 
 async function resolveUser(req: Request): Promise<User | null> {

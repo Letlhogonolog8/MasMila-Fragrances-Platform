@@ -58,6 +58,8 @@ app.use(cors({ credentials: true, origin: allowedOrigins.length ? allowedOrigins
 // Raw-body webhook routes must run before the JSON parser.
 app.use("/api", webhookRouter);
 
+// Admin file uploads arrive base64-encoded (4 MB file ≈ 5.4 MB of JSON).
+app.use("/api/admin/files", express.json({ limit: "6mb" }));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 

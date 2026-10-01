@@ -46,6 +46,27 @@ export const PROVINCES = [
   'Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape', 'Western Cape',
 ];
 
+/** Bulk pricing tiers ("50:5,100:10") → sorted [{ minBottles, percent }]. Mirrors the server. */
+export function bulkTiers(value: string | undefined) {
+  return (value ?? '')
+    .split(',')
+    .map((pair) => pair.trim().split(':').map(Number))
+    .filter(([min, pct]) => Number.isFinite(min) && Number.isFinite(pct) && pct! > 0 && pct! < 100)
+    .map(([min, pct]) => ({ minBottles: min!, percent: pct! }))
+    .sort((a, b) => a.minBottles - b.minBottles);
+}
+
+/** Bulk discount (%) for a reseller order of `bottles`, and the next tier to aim for. */
+export function bulkDiscount(value: string | undefined, bottles: number) {
+  const tiers = bulkTiers(value);
+  const current = tiers.filter((t) => bottles >= t.minBottles).pop() ?? null;
+  const next = tiers.find((t) => bottles < t.minBottles) ?? null;
+  return { percent: current?.percent ?? 0, next };
+}
+
+/** Unit price after a bulk discount, rounded to cents exactly as the server does. */
+export const discounted = (price: number, percent: number) => Math.round(price * (1 - percent / 100) * 100) / 100;
+
 /** Friendly message from an ApiError (or anything else). */
 export function errorMessage(error: unknown, fallback = 'Something went wrong. Please try again.') {
   const data = (error as { data?: { error?: string } } | null)?.data;

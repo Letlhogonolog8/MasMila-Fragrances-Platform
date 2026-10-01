@@ -7,6 +7,7 @@
  */
 
 export interface AdminSettings {
+  bulkDiscountTiers: string;
   openingOrder: number;
   reorderMinimum: number;
   teamLeaderRate: number;

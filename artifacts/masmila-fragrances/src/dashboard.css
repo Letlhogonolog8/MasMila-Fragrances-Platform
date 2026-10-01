@@ -204,3 +204,11 @@
   .pipeline { grid-template-columns: 1fr; }
   .shell-head h1 { font-size: 28px; }
 }
+
+/* uploads & inline inputs */
+.upload-btn { display: inline-flex; flex-direction: column; gap: 4px; }
+.upload-btn label { cursor: pointer; white-space: nowrap; }
+.inline-edit.grow { width: 100%; align-items: flex-start; }
+.inline-edit.grow > input { flex: 1; min-width: 0; }
+.setting-text { border: 1px solid hsl(var(--border)); background: hsl(var(--background)); padding: 8px; font: inherit; font-size: 13px; border-radius: 4px; width: 100%; box-sizing: border-box; color: inherit; }
+.dash-card h3 svg { vertical-align: -2px; margin-right: 6px; color: hsl(var(--primary)); }

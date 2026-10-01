@@ -18,4 +18,6 @@ export interface StoreConfig {
   bankDetails: string;
   authMode: StoreConfigAuthMode;
   siteUrl: string;
+  /** Reseller bulk pricing, "minBottles:percentOff" pairs, e.g. "50:5,100:10" */
+  bulkDiscountTiers: string;
 }

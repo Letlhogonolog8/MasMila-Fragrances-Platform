@@ -30,6 +30,7 @@ import type {
   AdminSettings,
   AdminSettingsInput,
   AdminSummary,
+  AnnouncementInput,
   ApplicationDecisionInput,
   AuditLog,
   CheckoutInput,
@@ -37,6 +38,7 @@ import type {
   CountResult,
   Enquiry,
   EnquiryInput,
+  FileUploadInput,
   FraudFlag,
   GetAdminReportParams,
   GetQualificationParams,
@@ -54,6 +56,7 @@ import type {
   ListProductsParams,
   MarketingMaterial,
   MarketingMaterialInput,
+  MarketingMaterialUpdate,
   Me,
   NewsletterInput,
   Notification,
@@ -80,7 +83,8 @@ import type {
   StoreConfig,
   TeamMember,
   TeamNode,
-  TrackOrderParams
+  TrackOrderParams,
+  UploadedFile
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -4268,6 +4272,89 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       return useMutation(getCreateMarketingMaterialMutationOptions(options));
     }
 
+export const getUpdateMarketingMaterialUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/marketing-materials/${id}`
+}
+
+export const updateMarketingMaterial = async (id: number,
+    marketingMaterialUpdate: MarketingMaterialUpdate, options?: Parameters<typeof customFetch>[1]): Promise<MarketingMaterial> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<MarketingMaterial>(getUpdateMarketingMaterialUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(marketingMaterialUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateMarketingMaterialMutationKey = () => ['updateMarketingMaterial'] as const;
+
+export const getUpdateMarketingMaterialMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMarketingMaterial>>, TError,UpdateMarketingMaterialMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateMarketingMaterial>>, TError,UpdateMarketingMaterialMutationVariables, TContext> => {
+
+const mutationKey = getUpdateMarketingMaterialMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateMarketingMaterial>>, UpdateMarketingMaterialMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateMarketingMaterial(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateMarketingMaterialMutationResult = NonNullable<Awaited<ReturnType<typeof updateMarketingMaterial>>>
+    export type UpdateMarketingMaterialMutationBody = BodyType<MarketingMaterialUpdate>
+    export type UpdateMarketingMaterialMutationError = ErrorType<unknown>
+    export type UpdateMarketingMaterialMutationVariables = {id: number;data: BodyType<MarketingMaterialUpdate>}
+
+    export const useUpdateMarketingMaterial = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMarketingMaterial>>, TError,UpdateMarketingMaterialMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateMarketingMaterial>>,
+        TError,
+        UpdateMarketingMaterialMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateMarketingMaterialMutationOptions(options));
+    }
+
 export const getDeleteMarketingMaterialUrl = (id: number,) => {
 
 
@@ -4334,6 +4421,182 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
         TContext
       > => {
       return useMutation(getDeleteMarketingMaterialMutationOptions(options));
+    }
+
+export const getSendAnnouncementUrl = () => {
+
+
+
+
+  return `/api/admin/announcements`
+}
+
+/**
+ * @summary Promotional campaign / announcement to customers, resellers or a rank
+ */
+export const sendAnnouncement = async (announcementInput: AnnouncementInput, options?: Parameters<typeof customFetch>[1]): Promise<CountResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<CountResult>(getSendAnnouncementUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(announcementInput)
+  }
+);}
+
+
+
+
+
+export const getSendAnnouncementMutationKey = () => ['sendAnnouncement'] as const;
+
+export const getSendAnnouncementMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendAnnouncement>>, TError,SendAnnouncementMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendAnnouncement>>, TError,SendAnnouncementMutationVariables, TContext> => {
+
+const mutationKey = getSendAnnouncementMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendAnnouncement>>, SendAnnouncementMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  sendAnnouncement(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendAnnouncementMutationResult = NonNullable<Awaited<ReturnType<typeof sendAnnouncement>>>
+    export type SendAnnouncementMutationBody = BodyType<AnnouncementInput>
+    export type SendAnnouncementMutationError = ErrorType<unknown>
+    export type SendAnnouncementMutationVariables = {data: BodyType<AnnouncementInput>}
+
+    /**
+ * @summary Promotional campaign / announcement to customers, resellers or a rank
+ */
+export const useSendAnnouncement = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendAnnouncement>>, TError,SendAnnouncementMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof sendAnnouncement>>,
+        TError,
+        SendAnnouncementMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSendAnnouncementMutationOptions(options));
+    }
+
+export const getUploadFileUrl = () => {
+
+
+
+
+  return `/api/admin/files`
+}
+
+/**
+ * @summary Upload a file (base64, max 4 MB) for marketing materials or product images
+ */
+export const uploadFile = async (fileUploadInput: FileUploadInput, options?: Parameters<typeof customFetch>[1]): Promise<UploadedFile> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<UploadedFile>(getUploadFileUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(fileUploadInput)
+  }
+);}
+
+
+
+
+
+export const getUploadFileMutationKey = () => ['uploadFile'] as const;
+
+export const getUploadFileMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadFile>>, TError,UploadFileMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof uploadFile>>, TError,UploadFileMutationVariables, TContext> => {
+
+const mutationKey = getUploadFileMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof uploadFile>>, UploadFileMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  uploadFile(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UploadFileMutationResult = NonNullable<Awaited<ReturnType<typeof uploadFile>>>
+    export type UploadFileMutationBody = BodyType<FileUploadInput>
+    export type UploadFileMutationError = ErrorType<unknown>
+    export type UploadFileMutationVariables = {data: BodyType<FileUploadInput>}
+
+    /**
+ * @summary Upload a file (base64, max 4 MB) for marketing materials or product images
+ */
+export const useUploadFile = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadFile>>, TError,UploadFileMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof uploadFile>>,
+        TError,
+        UploadFileMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUploadFileMutationOptions(options));
     }
 
 export const getListAuditLogsUrl = (params?: ListAuditLogsParams,) => {

@@ -22,7 +22,7 @@ import {
   type Volume,
 } from "./engine";
 import { getSettings, type Settings } from "./settings";
-import { previousPeriod } from "./period";
+import { currentPeriod, periodBounds, previousPeriod } from "./period";
 import { audit } from "./audit";
 import { notifyUser } from "./notify";
 import { round2 } from "./http";
@@ -372,7 +372,10 @@ export async function runQualification(period: string, actor: { id: number } | n
     (await db.select().from(qualificationPeriodsTable).where(eq(qualificationPeriodsTable.period, period))).map((r) => [r.resellerId, r]),
   );
 
+  const periodEnd = periodBounds(period).end;
   for (const reseller of resellers.values()) {
+    // Not yet a reseller during this period: nothing to judge (no inactivity or rank warnings).
+    if (reseller.approvedAt >= periodEnd) continue;
     const s = stats.get(reseller.id)!;
     // On a re-run, decide from the rank the reseller held before the first run.
     const prior = existingSnapshots.get(reseller.id);
@@ -444,8 +447,29 @@ export async function runQualification(period: string, actor: { id: number } | n
     .insert(periodRunsTable)
     .values({ period, status: "closed", runAt: new Date(), runBy: actor?.id ?? null, resellerCount: resellers.size })
     .onConflictDoUpdate({ target: periodRunsTable.period, set: { status: "closed", runAt: new Date(), runBy: actor?.id ?? null, resellerCount: resellers.size } });
-  await audit(previousRun ? "qualification_rerun" : "qualification_run", "period", period, actor, { promotions, demotions, warnings, ...ledger });
+  await audit(previousRun?.status === "closed" ? "qualification_rerun" : actor ? "qualification_run" : "qualification_auto_run", "period", period, actor, { promotions, demotions, warnings, ...ledger });
   return { promotions, demotions, warnings, ledgerQualified: ledger.qualified, ledgerVoided: ledger.voided };
+}
+
+/**
+ * Automatic month-end close: once a calendar month has ended, run its
+ * qualification (ranks, warnings, reversions, incentive settlement) without
+ * waiting for an administrator. Claiming the period with a "running" row
+ * first means concurrent server instances can't double-run it. Admins can
+ * still re-run any month from the console.
+ */
+export async function autoCloseQualification() {
+  const period = previousPeriod(currentPeriod());
+  const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(resellersTable);
+  if (!count) return false;
+  const claimed = await db
+    .insert(periodRunsTable)
+    .values({ period, status: "running", runAt: new Date() })
+    .onConflictDoNothing()
+    .returning({ period: periodRunsTable.period });
+  if (!claimed.length) return false;
+  await runQualification(period, null);
+  return true;
 }
 
 /** Bring a reseller's live status up to date after a sale (reactivation). */

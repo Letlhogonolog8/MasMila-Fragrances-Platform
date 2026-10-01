@@ -6,11 +6,13 @@ import accountRouter from "./account";
 import resellerRouter from "./reseller";
 import adminRouter from "./admin";
 import seoRouter from "./seo";
+import filesRouter from "./files";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(seoRouter);
+router.use(filesRouter);
 router.use(catalogRouter);
 router.use(checkoutRouter);
 router.use(accountRouter);

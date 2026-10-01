@@ -52,6 +52,7 @@ router.get("/store-config", async (_req, res) => {
       bankDetails: content.bankDetails ?? "",
       authMode,
       siteUrl: process.env.SITE_URL ?? "https://masmila.co.za",
+      bulkDiscountTiers: settings.bulkDiscountTiers,
     }),
   );
 });

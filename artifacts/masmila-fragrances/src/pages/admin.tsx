@@ -66,7 +66,7 @@ function Overview({ goTo }: { goTo: (t: Tab) => void }) {
         <Kpi tone="primary" icon={TrendingUp} label={`Sales · ${periodLabel(d.period)}`} value={moneyShort(d.sales.month)} delta={<Delta current={d.sales.month} previous={d.sales.lastMonth} />} detail={`${d.sales.ordersMonth} orders`} testId="metric-sales-month" />
         <Kpi icon={ShoppingCart} label="Today" value={moneyShort(d.sales.today)} detail={`${d.sales.ordersToday} orders · 7 days ${moneyShort(d.sales.week)}`} testId="metric-sales-today" />
         <Kpi icon={Wallet} label="Gross profit (month)" value={moneyShort(d.products.grossProfit)} detail={d.products.revenue ? `${Math.round((d.products.grossProfit / d.products.revenue) * 100)}% margin` : 'No sales yet'} />
-        <Kpi icon={BadgeDollarSign} label="Incentives (month)" value={moneyShort(d.organisation.incentivesMonth)} detail={`${money(d.organisation.incentivesApproved)} approved to pay`} />
+        <Kpi icon={BadgeDollarSign} label="Incentives (month)" value={moneyShort(d.organisation.incentivesMonth)} detail={`${money(d.organisation.incentivesPending)} pending · ${money(d.organisation.incentivesApproved)} approved · ${money(d.organisation.incentivesPaid)} paid`} />
       </div>
       <div className="dash-grid-2-1">
         <section className="dash-card"><div className="card-head"><h2>Daily sales</h2><span className="muted small-text">Last 14 days</span></div><div data-testid="chart-daily-sales"><AreaTrend data={d.dailySales} /></div></section>
@@ -87,7 +87,7 @@ function Overview({ goTo }: { goTo: (t: Tab) => void }) {
         <Kpi icon={Users} label="Resellers" value={d.resellers.total} detail={`${d.resellers.active} active · ${d.resellers.inactive} inactive · ${d.resellers.newThisMonth} new`} />
         <Kpi icon={Network} label="Leaders" value={d.organisation.teamLeaders + d.organisation.managers + d.organisation.directors} detail={`${d.organisation.teamLeaders} TLs · ${d.organisation.managers} Managers · ${d.organisation.directors} Directors`} />
         <Kpi icon={Package} label="Units sold (month)" value={d.products.unitsSold} detail={`${d.products.stockUnits} in stock · ${d.products.activeProducts} products`} />
-        <Kpi icon={BadgeDollarSign} label="Incentives pending" value={moneyShort(d.organisation.incentivesPending)} detail={`${money(d.organisation.incentivesPaid)} paid to date`} />
+        <Kpi icon={ShoppingCart} label="Average order value" value={d.sales.ordersMonth ? money(d.sales.month / d.sales.ordersMonth) : '—'} detail={`${d.sales.ordersMonth} paid orders this month`} testId="metric-aov" />
       </div>
       <div className="dashboard-grid even"><LeaderList title="Top sellers" rows={d.resellers.topSellers} unit="bottles" /><LeaderList title="Top teams" rows={d.resellers.topTeams} unit="team bottles" /></div>
       <div className="dashboard-grid even"><PerfList title="Best sellers" rows={d.products.bestSellers} empty="No sales yet this month." /><PerfList title="Slow sellers" rows={d.products.slowSellers} empty="Nothing to flag." /></div>

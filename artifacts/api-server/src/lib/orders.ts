@@ -13,7 +13,7 @@ import {
 } from "@workspace/db";
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { available } from "./catalog";
-import { getSettings, shippingFor } from "./settings";
+import { bulkDiscountFor, getSettings, shippingFor } from "./settings";
 import { periodOf } from "./period";
 import { badRequest, forbidden, HttpError, iso, notFound, round2 } from "./http";
 import { isUniqueViolation, orderNumber } from "./codes";
@@ -111,10 +111,14 @@ export async function createOrder(input: CheckoutInput, ctx: { user: User | null
     }
   }
 
+  // Admin-configured bulk pricing on reseller stock orders (mixed fragrances count together).
+  const bulkPercent = input.mode === "reseller" ? bulkDiscountFor(bottles, settings) : 0;
   const lines = products.map((p) => {
     const quantity = quantities.get(p.id)!;
-    const unitPrice = input.mode === "reseller" ? p.resellerPrice : p.retailPrice;
-    return { product: p, quantity, unitPrice };
+    const unitPrice = input.mode === "reseller" ? round2(p.resellerPrice * (1 - bulkPercent / 100)) : p.retailPrice;
+    // Qualifying (wholesale) value: what a reseller actually paid; list reseller price for retail sales.
+    const unitWholesale = input.mode === "reseller" ? unitPrice : p.resellerPrice;
+    return { product: p, quantity, unitPrice, unitWholesale };
   });
   const subtotal = round2(lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0));
   const shippingFee = shippingFor(subtotal, settings);
@@ -144,7 +148,7 @@ export async function createOrder(input: CheckoutInput, ctx: { user: User | null
         subtotal,
         shippingFee,
         total: round2(subtotal + shippingFee),
-        wholesaleValue: round2(lines.reduce((sum, l) => sum + l.product.resellerPrice * l.quantity, 0)),
+        wholesaleValue: round2(lines.reduce((sum, l) => sum + l.unitWholesale * l.quantity, 0)),
         costValue: round2(lines.reduce((sum, l) => sum + l.product.cost * l.quantity, 0)),
         paymentMethod: wantsShopify ? "shopify" : "eft",
         notes: input.notes?.trim() || null,
@@ -160,7 +164,7 @@ export async function createOrder(input: CheckoutInput, ctx: { user: User | null
         size: l.product.size,
         quantity: l.quantity,
         unitPrice: l.unitPrice,
-        unitWholesale: l.product.resellerPrice,
+        unitWholesale: l.unitWholesale,
         unitCost: l.product.cost,
       })),
     );

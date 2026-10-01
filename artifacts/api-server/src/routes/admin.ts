@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { randomBytes } from "node:crypto";
 import {
   ApproveCommissionsBody,
   CreateAdminProductBody,
@@ -59,6 +60,12 @@ import {
   CreateAdminProductResponse,
   UpdateAdminProductResponse,
   CreateMarketingMaterialResponse,
+  SendAnnouncementBody,
+  UpdateMarketingMaterialBody,
+  UpdateMarketingMaterialParams,
+  UpdateMarketingMaterialResponse,
+  UploadFileBody,
+  UploadFileResponse,
   UpdateAdminResellerResponse,
   UpdateFraudFlagResponse,
   UpdateAdminEnquiryResponse,
@@ -70,6 +77,7 @@ import {
   enquiriesTable,
   fraudFlagsTable,
   marketingMaterialsTable,
+  uploadedFilesTable,
   orderItemsTable,
   ordersTable,
   payoutsTable,
@@ -92,7 +100,7 @@ import { evaluatePeriod, PAID_STATUSES, resellerNames, runQualification } from "
 import { currentPeriod, periodBounds, previousPeriod, sastDateLabel, shiftPeriod, startOfDay } from "../lib/period";
 import { getSettings, updateSettings } from "../lib/settings";
 import { audit } from "../lib/audit";
-import { notifyEmail, notifyUser } from "../lib/notify";
+import { notifyEmail, notifyMany, notifyUser } from "../lib/notify";
 import { getOrderView, refundOrder, serializeOrders, updateFulfilment } from "../lib/orders";
 import { duplicateIdentityWarnings } from "../lib/fraud";
 import { isUniqueViolation, randomCode, referralCodeFor, resellerCodeFor, slugify } from "../lib/codes";
@@ -957,13 +965,71 @@ router.get("/admin/marketing-materials", async (_req, res) => {
 
 router.post("/admin/marketing-materials", async (req, res) => {
   const input = CreateMarketingMaterialBody.parse(req.body);
-  if (!/^https?:\/\//i.test(input.url)) throw badRequest("Materials must be a link starting with http:// or https://");
+  if (!/^(https?:\/\/|\/api\/files\/)/i.test(input.url)) throw badRequest("Materials must be an uploaded file or a link starting with https://");
   const [row] = await db
     .insert(marketingMaterialsTable)
     .values({ ...input, description: input.description ?? "", minRank: input.minRank && rankValue(input.minRank) >= 0 ? input.minRank : "reseller" })
     .returning();
   await audit("marketing_material_created", "marketing_material", row!.id, req.currentUser, { title: row!.title });
   res.status(201).json(CreateMarketingMaterialResponse.parse({ ...row!, createdAt: row!.createdAt.toISOString() }));
+});
+
+router.patch("/admin/marketing-materials/:id", async (req, res) => {
+  const { id } = UpdateMarketingMaterialParams.parse(req.params);
+  const patch = UpdateMarketingMaterialBody.parse(req.body);
+  if (patch.url && !/^(https?:\/\/|\/api\/files\/)/i.test(patch.url)) throw badRequest("Materials must be an uploaded file or a link starting with https://");
+  if (patch.minRank && !["reseller", "team_leader", "manager", "director"].includes(patch.minRank)) throw badRequest("Unknown rank.");
+  const [row] = await db.update(marketingMaterialsTable).set(patch).where(eq(marketingMaterialsTable.id, id)).returning();
+  if (!row) throw notFound("Material not found");
+  await audit("marketing_material_updated", "marketing_material", id, req.currentUser, { fields: Object.keys(patch) });
+  res.json(UpdateMarketingMaterialResponse.parse({ ...row, createdAt: row.createdAt.toISOString() }));
+});
+
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+const UPLOAD_TYPES = /^(image\/(png|jpe?g|webp|gif|svg\+xml)|application\/pdf|text\/csv|application\/vnd\.(ms-excel|openxmlformats-officedocument\.(spreadsheetml\.sheet|wordprocessingml\.document|presentationml\.presentation))|video\/mp4)$/;
+
+router.post("/admin/files", async (req, res) => {
+  const input = UploadFileBody.parse(req.body);
+  if (!UPLOAD_TYPES.test(input.contentType)) throw badRequest("Upload images, PDFs, spreadsheets, documents, slides or MP4 video.");
+  const bytes = Buffer.from(input.data, "base64");
+  if (!bytes.length) throw badRequest("The file is empty.");
+  if (bytes.length > MAX_UPLOAD_BYTES) throw badRequest("Files can be up to 4 MB. Link larger files (e.g. videos) from Google Drive or YouTube instead.");
+  const [row] = await db
+    .insert(uploadedFilesTable)
+    .values({ token: randomBytes(18).toString("base64url"), name: input.name.slice(0, 200), contentType: input.contentType, size: bytes.length, data: bytes.toString("base64"), uploadedBy: req.currentUser!.id })
+    .returning({ id: uploadedFilesTable.id, token: uploadedFilesTable.token, name: uploadedFilesTable.name, size: uploadedFilesTable.size });
+  await audit("file_uploaded", "file", row!.id, req.currentUser, { name: row!.name, size: row!.size, contentType: input.contentType });
+  res.status(201).json(UploadFileResponse.parse({ ...row!, url: `/api/files/${row!.id}/${row!.token}` }));
+});
+
+router.post("/admin/announcements", async (req, res) => {
+  const input = SendAnnouncementBody.parse(req.body);
+  const filters: SQL[] = [eq(usersTable.accountStatus, "active")];
+  if (input.audience === "customers") {
+    filters.push(eq(usersTable.role, "customer"));
+    // POPIA: promotional messages only to customers who opted in.
+    if (input.marketingOnly !== false) filters.push(eq(usersTable.marketingOptIn, true));
+  }
+  const base = db.select({ id: usersTable.id, email: usersTable.email }).from(usersTable);
+  const recipients =
+    input.audience === "resellers" || input.audience === "team_leaders" || input.audience === "managers"
+      ? await base
+          .innerJoin(resellersTable, eq(resellersTable.userId, usersTable.id))
+          .where(
+            and(
+              ...filters,
+              sql`${resellersTable.standing} <> 'suspended'`,
+              input.audience === "team_leaders"
+                ? inArray(resellersTable.rank, ["team_leader", "manager", "director"])
+                : input.audience === "managers"
+                  ? inArray(resellersTable.rank, ["manager", "director"])
+                  : undefined,
+            ),
+          )
+      : await base.where(and(...filters));
+  const count = await notifyMany(recipients, "announcement", input.title, input.body, input.link ?? undefined);
+  await audit("announcement_sent", "announcement", null, req.currentUser, { audience: input.audience, title: input.title, recipients: count });
+  res.json({ count });
 });
 
 router.delete("/admin/marketing-materials/:id", async (req, res) => {

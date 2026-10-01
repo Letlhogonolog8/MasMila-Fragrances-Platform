@@ -1,6 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { prepareData } from "./lib/prepare";
+import { prepareData, runScheduledJobs } from "./lib/prepare";
 
 const rawPort = process.env["PORT"];
 
@@ -27,4 +27,6 @@ prepareData()
 
       logger.info({ port }, "Server listening");
     });
+    // Long-running server: check for a month to close every hour.
+    setInterval(() => void runScheduledJobs(), 60 * 60 * 1000).unref();
   });

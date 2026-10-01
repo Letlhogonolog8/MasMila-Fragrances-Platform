@@ -459,6 +459,12 @@ export const compensationSettingsTable = pgTable("compensation_settings", {
   monthlyContributionTarget: money("monthly_contribution_target")
     .notNull()
     .default(150000),
+  /**
+   * Bulk pricing for reseller stock orders: "minBottles:percentOff" pairs,
+   * e.g. "50:5,100:10" = 5% off reseller price from 50 bottles, 10% from 100.
+   * Empty = no bulk discounts.
+   */
+  bulkDiscountTiers: text("bulk_discount_tiers").notNull().default(""),
   updatedAt: updatedAt(),
 });
 export type CompensationSettings = typeof compensationSettingsTable.$inferSelect;
@@ -501,6 +507,24 @@ export const notificationsTable = pgTable(
   },
   (t) => [index("notifications_user_idx").on(t.userId)],
 );
+
+/**
+ * Files uploaded by administrators (marketing images, price lists, PDFs),
+ * served at /api/files/:id. Kept in Postgres so uploads work on any host,
+ * including serverless; large videos should be linked instead.
+ */
+export const uploadedFilesTable = pgTable("uploaded_files", {
+  id: serial("id").primaryKey(),
+  /** Unguessable part of the file URL (files can include reseller price lists). */
+  token: text("token").notNull(),
+  name: text("name").notNull(),
+  contentType: text("content_type").notNull(),
+  size: integer("size").notNull(),
+  /** base64-encoded content */
+  data: text("data").notNull(),
+  uploadedBy: integer("uploaded_by").references(() => usersTable.id),
+  createdAt: createdAt(),
+});
 
 export const marketingMaterialsTable = pgTable("marketing_materials", {
   id: serial("id").primaryKey(),

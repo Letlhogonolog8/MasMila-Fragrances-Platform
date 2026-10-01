@@ -49,6 +49,8 @@ export interface StoreConfig {
   bankDetails: string;
   authMode: StoreConfigAuthMode;
   siteUrl: string;
+  /** Reseller bulk pricing, "minBottles:percentOff" pairs, e.g. "50:5,100:10" */
+  bulkDiscountTiers: string;
 }
 
 export type ProductStockStatus = typeof ProductStockStatus[keyof typeof ProductStockStatus];
@@ -632,6 +634,68 @@ export interface MarketingMaterialInput {
   minRank?: string;
 }
 
+export interface MarketingMaterialUpdate {
+  /** @minLength 1 */
+  title?: string;
+  /** @minLength 1 */
+  category?: string;
+  /** @minLength 1 */
+  url?: string;
+  description?: string;
+  minRank?: string;
+}
+
+export type AnnouncementInputAudience = typeof AnnouncementInputAudience[keyof typeof AnnouncementInputAudience];
+
+
+export const AnnouncementInputAudience = {
+  everyone: 'everyone',
+  customers: 'customers',
+  resellers: 'resellers',
+  team_leaders: 'team_leaders',
+  managers: 'managers',
+} as const;
+
+export interface AnnouncementInput {
+  audience: AnnouncementInputAudience;
+  /**
+     * @minLength 2
+     * @maxLength 120
+     */
+  title: string;
+  /**
+     * @minLength 2
+     * @maxLength 2000
+     */
+  body: string;
+  /** @nullable */
+  link?: string | null;
+  /** Customers only receive it if they opted in to marketing (POPIA) */
+  marketingOnly?: boolean;
+}
+
+export interface FileUploadInput {
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  name: string;
+  /** @minLength 3 */
+  contentType: string;
+  /**
+     * Base64-encoded file content
+     * @minLength 1
+     */
+  data: string;
+}
+
+export interface UploadedFile {
+  id: number;
+  url: string;
+  name: string;
+  size: number;
+}
+
 export interface SalesPoint {
   label: string;
   value: number;
@@ -739,6 +803,7 @@ export interface AdminSummary {
 }
 
 export interface AdminSettings {
+  bulkDiscountTiers: string;
   openingOrder: number;
   reorderMinimum: number;
   teamLeaderRate: number;
@@ -836,6 +901,8 @@ export interface AdminSettingsInput {
   freeShippingThreshold?: number;
   /** @minimum 0 */
   monthlyContributionTarget?: number;
+  /** @pattern ^$|^[0-9]+:[0-9]+([.][0-9]+)?(,[0-9]+:[0-9]+([.][0-9]+)?)*$ */
+  bulkDiscountTiers?: string;
 }
 
 export interface AdminApplication {

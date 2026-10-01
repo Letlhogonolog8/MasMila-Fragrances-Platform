@@ -4,12 +4,26 @@ import { ArrowRight, Minus, Plus, Trash2 } from 'lucide-react';
 import { useCheckout, type CheckoutInput } from '@workspace/api-client-react';
 import { EmptyState } from '@/components/bits';
 import { useStoreConfig } from '@/components/site';
-import { useCart } from '@/lib/cart';
+import { type CartLine, useCart } from '@/lib/cart';
 import { useMe } from '@/lib/auth';
-import { errorMessage, money, PROVINCES } from '@/lib/format';
+import { bulkDiscount, discounted, errorMessage, money, PROVINCES } from '@/lib/format';
 import { clearReferral, getReferral } from '@/lib/referral';
 import { useSeo } from '@/lib/seo';
 import { track } from '@/lib/analytics';
+
+/**
+ * Bag totals exactly as the server will charge them: reseller stock orders get
+ * the admin-configured bulk discount, and delivery is based on the discounted subtotal.
+ */
+function useTotals() {
+  const cart = useCart();
+  const config = useStoreConfig();
+  const bulk = cart.mode === 'reseller' ? bulkDiscount(config.data?.bulkDiscountTiers, cart.count) : { percent: 0, next: null };
+  const price = (line: CartLine) => discounted(cart.unitPrice(line), bulk.percent);
+  const subtotal = Math.round(cart.lines.reduce((sum, l) => sum + price(l) * l.quantity, 0) * 100) / 100;
+  const shipping = config.data ? (subtotal >= config.data.freeShippingThreshold ? 0 : config.data.shippingFlatRate) : 0;
+  return { bulk, price, subtotal, shipping };
+}
 
 export function CartPage() {
   const cart = useCart();
@@ -22,7 +36,7 @@ export function CartPage() {
   if (!cart.lines.length) {
     return <main className="container-wide dashboard-wrap"><EmptyState title="Your bag is empty.">Find a scent you love — or a gift for someone who deserves it.</EmptyState><p style={{ textAlign: 'center' }}><Link className="btn-primary" href="/shop">SHOP MAS'MILA <ArrowRight size={15} /></Link></p></main>;
   }
-  const shipping = config.data ? (cart.subtotal >= config.data.freeShippingThreshold ? 0 : config.data.shippingFlatRate) : 0;
+  const { bulk, price, subtotal, shipping } = useTotals();
   const minimum = cart.mode === 'reseller' && config.data ? (me?.reseller?.openingOrderCompleted ? config.data.reorderMinimum : config.data.openingOrder) : 0;
   const belowMinimum = cart.mode === 'reseller' && cart.count < minimum;
   const missingResellerPrice = cart.mode === 'reseller' && cart.lines.some((l) => l.resellerPrice == null);
@@ -42,13 +56,13 @@ export function CartPage() {
             {cart.lines.map((line) => (
               <div className="cart-line" key={line.productId} data-testid={`cart-line-${line.productId}`}>
                 <img src={line.image} alt="" />
-                <div><Link href={`/product/${line.slug}`}><strong>{line.name}</strong></Link><small>{line.size} · {money(cart.unitPrice(line))} each</small></div>
+                <div><Link href={`/product/${line.slug}`}><strong>{line.name}</strong></Link><small>{line.size} · {money(price(line))} each</small></div>
                 <div className="qty small">
                   <button type="button" onClick={() => cart.setQuantity(line.productId, line.quantity - 1)} aria-label="Decrease"><Minus size={12} /></button>
                   <input aria-label={`Quantity for ${line.name}`} value={line.quantity} inputMode="numeric" onChange={(e) => cart.setQuantity(line.productId, Number(e.target.value.replace(/\D/g, '')) || 1)} />
                   <button type="button" onClick={() => cart.setQuantity(line.productId, line.quantity + 1)} aria-label="Increase"><Plus size={12} /></button>
                 </div>
-                <strong>{money(cart.unitPrice(line) * line.quantity)}</strong>
+                <strong>{money(price(line) * line.quantity)}</strong>
                 <button className="icon-button" onClick={() => cart.remove(line.productId)} aria-label={`Remove ${line.name}`}><Trash2 size={14} /></button>
               </div>
             ))}
@@ -56,10 +70,12 @@ export function CartPage() {
         </section>
         <aside className="dash-card summary-card">
           <h2>Summary</h2>
-          <div className="summary-row"><span>Subtotal</span><strong>{money(cart.subtotal)}</strong></div>
+          <div className="summary-row"><span>Subtotal</span><strong>{money(subtotal)}</strong></div>
+          {bulk.percent ? <div className="summary-row"><span>Bulk pricing</span><strong className="ok-text">{bulk.percent}% off reseller price</strong></div> : null}
+          {bulk.next ? <small className="muted" data-testid="text-next-tier">Add {bulk.next.minBottles - cart.count} more bottles for {bulk.next.percent}% off.</small> : null}
           <div className="summary-row"><span>Delivery</span><strong>{shipping === 0 ? 'Free' : money(shipping)}</strong></div>
           {config.data && shipping > 0 ? <small className="muted">Free delivery on orders over {money(config.data.freeShippingThreshold)}.</small> : null}
-          <div className="summary-row total"><span>Total</span><strong data-testid="text-cart-total">{money(cart.subtotal + shipping)}</strong></div>
+          <div className="summary-row total"><span>Total</span><strong data-testid="text-cart-total">{money(subtotal + shipping)}</strong></div>
           {belowMinimum ? <p className="form-message" data-testid="state-minimum">{me?.reseller?.openingOrderCompleted ? `Reseller re-orders need at least ${minimum} bottles.` : `Your opening order needs at least ${minimum} bottles (mixed fragrances allowed). Add ${minimum - cart.count} more.`}</p> : null}
           {missingResellerPrice ? <p className="form-message">Some items were added before you signed in. Remove and re-add them to load reseller pricing.</p> : null}
           <Link className={`btn-primary block ${belowMinimum || missingResellerPrice ? 'disabled' : ''}`} href={belowMinimum || missingResellerPrice ? '/cart' : '/checkout'} data-testid="button-checkout">Checkout <ArrowRight size={15} /></Link>
@@ -84,7 +100,7 @@ export function CheckoutPage() {
     notes: '', referralCode: referral?.code ?? '', paymentMethod: 'eft' as 'eft' | 'shopify', saveAddress: true,
   });
   useSeo({ title: 'Checkout', noindex: true });
-  useEffect(() => { track('begin_checkout', { value: cart.subtotal, items: cart.count }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { track('begin_checkout', { value: subtotal, items: cart.count }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!user) return;
     setForm((f) => ({
@@ -96,7 +112,7 @@ export function CheckoutPage() {
 
   if (!cart.lines.length && !checkout.isSuccess) return <main className="container-wide dashboard-wrap"><EmptyState title="Your bag is empty." /><p style={{ textAlign: 'center' }}><Link className="btn-primary" href="/shop">Shop</Link></p></main>;
   const set = (key: keyof typeof form, value: string | boolean) => setForm((f) => ({ ...f, [key]: value }));
-  const shipping = config.data ? (cart.subtotal >= config.data.freeShippingThreshold ? 0 : config.data.shippingFlatRate) : 0;
+  const { bulk, price, subtotal, shipping } = useTotals();
   const isResellerOrder = cart.mode === 'reseller';
 
   const submit = (e: FormEvent) => {
@@ -165,9 +181,10 @@ export function CheckoutPage() {
         </section>
         <aside className="dash-card summary-card">
           <h2>Order summary</h2>
-          {cart.lines.map((l) => <div key={l.productId} className="summary-row"><span>{l.quantity} × {l.name} {l.size}</span><span>{money(cart.unitPrice(l) * l.quantity)}</span></div>)}
+          {cart.lines.map((l) => <div key={l.productId} className="summary-row"><span>{l.quantity} × {l.name} {l.size}</span><span>{money(price(l) * l.quantity)}</span></div>)}
+          {bulk.percent ? <div className="summary-row"><span>Bulk pricing</span><strong className="ok-text">{bulk.percent}% off</strong></div> : null}
           <div className="summary-row"><span>Delivery</span><strong>{shipping === 0 ? 'Free' : money(shipping)}</strong></div>
-          <div className="summary-row total"><span>Total (ZAR, incl. VAT)</span><strong>{money(cart.subtotal + shipping)}</strong></div>
+          <div className="summary-row total"><span>Total (ZAR, incl. VAT)</span><strong>{money(subtotal + shipping)}</strong></div>
           <small className="muted">By placing this order you agree to our <Link href="/terms">terms</Link>{isResellerOrder ? <> and <Link href="/reseller-terms">reseller terms</Link></> : null}.</small>
           <button className="btn-primary block" type="submit" disabled={checkout.isPending} data-testid="button-place-order">{checkout.isPending ? 'Placing order…' : 'Place order'} <ArrowRight size={15} /></button>
         </aside>

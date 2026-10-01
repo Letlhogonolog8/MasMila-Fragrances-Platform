@@ -26,7 +26,8 @@ export const GetStoreConfigResponse = zod.object({
   "shopifyCheckoutEnabled": zod.boolean(),
   "bankDetails": zod.string(),
   "authMode": zod.enum(['clerk', 'demo', 'none']),
-  "siteUrl": zod.string()
+  "siteUrl": zod.string(),
+  "bulkDiscountTiers": zod.string().describe('Reseller bulk pricing, "minBottles:percentOff" pairs, e.g. "50:5,100:10"')
 })
 
 
@@ -930,6 +931,7 @@ export const GetAdminSummaryResponse = zod.object({
 
 
 export const GetAdminSettingsResponse = zod.object({
+  "bulkDiscountTiers": zod.string(),
   "openingOrder": zod.number().int(),
   "reorderMinimum": zod.number().int(),
   "teamLeaderRate": zod.number(),
@@ -1006,6 +1008,7 @@ export const updateAdminSettingsBodyFreeShippingThresholdMin = 0;
 
 export const updateAdminSettingsBodyMonthlyContributionTargetMin = 0;
 
+export const updateAdminSettingsBodyBulkDiscountTiersRegExp = new RegExp('^$|^[0-9]+:[0-9]+([.][0-9]+)?(,[0-9]+:[0-9]+([.][0-9]+)?)*$');
 
 
 export const UpdateAdminSettingsBody = zod.object({
@@ -1033,10 +1036,12 @@ export const UpdateAdminSettingsBody = zod.object({
   "largeOrderBottles": zod.number().int().min(1).optional(),
   "shippingFlatRate": zod.number().min(updateAdminSettingsBodyShippingFlatRateMin).optional(),
   "freeShippingThreshold": zod.number().min(updateAdminSettingsBodyFreeShippingThresholdMin).optional(),
-  "monthlyContributionTarget": zod.number().min(updateAdminSettingsBodyMonthlyContributionTargetMin).optional()
+  "monthlyContributionTarget": zod.number().min(updateAdminSettingsBodyMonthlyContributionTargetMin).optional(),
+  "bulkDiscountTiers": zod.string().regex(updateAdminSettingsBodyBulkDiscountTiersRegExp).optional()
 })
 
 export const UpdateAdminSettingsResponse = zod.object({
+  "bulkDiscountTiers": zod.string(),
   "openingOrder": zod.number().int(),
   "reorderMinimum": zod.number().int(),
   "teamLeaderRate": zod.number(),
@@ -1883,12 +1888,88 @@ export const CreateMarketingMaterialResponse = zod.object({
 })
 
 
+export const UpdateMarketingMaterialParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+
+
+
+
+
+export const UpdateMarketingMaterialBody = zod.object({
+  "title": zod.string().min(1).optional(),
+  "category": zod.string().min(1).optional(),
+  "url": zod.string().min(1).optional(),
+  "description": zod.string().optional(),
+  "minRank": zod.string().optional()
+})
+
+export const UpdateMarketingMaterialResponse = zod.object({
+  "id": zod.number().int(),
+  "title": zod.string(),
+  "category": zod.string(),
+  "url": zod.string(),
+  "description": zod.string(),
+  "minRank": zod.string(),
+  "createdAt": zod.string()
+})
+
+
 export const DeleteMarketingMaterialParams = zod.object({
   "id": zod.coerce.number().int()
 })
 
 export const DeleteMarketingMaterialResponse = zod.object({
   "ok": zod.boolean()
+})
+
+
+/**
+ * @summary Promotional campaign / announcement to customers, resellers or a rank
+ */
+export const sendAnnouncementBodyTitleMin = 2;
+export const sendAnnouncementBodyTitleMax = 120;
+
+export const sendAnnouncementBodyBodyMin = 2;
+export const sendAnnouncementBodyBodyMax = 2000;
+
+
+
+export const SendAnnouncementBody = zod.object({
+  "audience": zod.enum(['everyone', 'customers', 'resellers', 'team_leaders', 'managers']),
+  "title": zod.string().min(sendAnnouncementBodyTitleMin).max(sendAnnouncementBodyTitleMax),
+  "body": zod.string().min(sendAnnouncementBodyBodyMin).max(sendAnnouncementBodyBodyMax),
+  "link": zod.string().nullish(),
+  "marketingOnly": zod.boolean().optional().describe('Customers only receive it if they opted in to marketing (POPIA)')
+})
+
+export const SendAnnouncementResponse = zod.object({
+  "count": zod.number().int()
+})
+
+
+/**
+ * @summary Upload a file (base64, max 4 MB) for marketing materials or product images
+ */
+export const uploadFileBodyNameMax = 200;
+
+export const uploadFileBodyContentTypeMin = 3;
+
+
+
+
+export const UploadFileBody = zod.object({
+  "name": zod.string().min(1).max(uploadFileBodyNameMax),
+  "contentType": zod.string().min(uploadFileBodyContentTypeMin),
+  "data": zod.string().min(1).describe('Base64-encoded file content')
+})
+
+export const UploadFileResponse = zod.object({
+  "id": zod.number().int(),
+  "url": zod.string(),
+  "name": zod.string(),
+  "size": zod.number().int()
 })
 
 

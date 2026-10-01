@@ -9,7 +9,7 @@ The API seeds the acceptance scenario from §48: a Manager with three Team Leade
 | Sign in as | Role | What to check |
 |---|---|---|
 | `admin@masmila.co.za` | Administrator | Dashboard, approve the pending application, run qualification, approve & pay incentives, export reports |
-| `manager@masmila.co.za` | Manager | Organisation view; 2% incentive = **R1,008** on the three TL teams |
+| `manager@masmila.co.za` | Manager | Organisation view; 2% on the three TL teams = **R1,008**, plus 5% on their own direct team; performance report CSV |
 | `teamleader@masmila.co.za` | Team Leader | Team table; 5% × (100 bottles × R140) = **R700** |
 | `reseller@masmila.co.za` | Reseller | R140 reseller pricing, stock ordering, referral link/QR |
 | `newreseller@masmila.co.za` | Reseller | 10-bottle opening order enforcement |
@@ -27,30 +27,30 @@ The API seeds the acceptance scenario from §48: a Manager with three Team Leade
 | 8 | Reseller application & approval queue | `pages/apply.tsx`; Admin → Applications: Approve / Reject / Request more info; duplicate-identity warnings |
 | 9 | Reseller portal (`/account/reseller`) | `pages/portal.tsx` — rank, sales, bottles, status, next rank, progress %, requirements |
 | 10 | Reseller pricing protection | `resellerPrice` only returned to approved resellers in good standing |
-| 11 | Reseller ordering | Opening order (10) and re-order minimum enforced server-side; mixed fragrances; both configurable |
+| 11 | Reseller ordering | Opening order (10) and re-order minimum enforced server-side; mixed fragrances; both configurable. Optional bulk pricing tiers (e.g. `20:5,50:10`, set in Settings) apply at checkout, with an "add N more" hint |
 | 12 | Sales tracking & attribution | Personal purchases (`channel = reseller`) vs attributed customer sales (link, code, QR, landing page, manual by admin); IDs like `MSM-000123`, codes like `NOMDADE123` |
 | 13–17 | Team structure, ranks, 5% / 2% / 1% | `lib/engine.ts` (pure, unit-tested); Director level built but disabled until switched on in settings |
-| 18–19 | Inactivity & Team Leader reversion | Active = ≥1 bottle/month; reactivation = 10 bottles; leaders get a coaching month, then revert; all thresholds configurable |
+| 18–19 | Inactivity & Team Leader reversion | Active = ≥1 bottle/month; reactivation = 10 bottles; leaders get a coaching month, then revert; all thresholds configurable. Last month's qualification closes automatically after month end (hourly check, `lib/network.ts`); admins can still re-run it |
 | 20 | Commission ledger | `commission_ledger` — order, seller, product, qty, wholesale value, qualification status, beneficiary (upline), rank, rate, incentive, approval/payment status, date, reversal link |
 | 21 | Commission safety | Incentives only from order lines; no code path pays on joining/registration/recruitment |
 | 22 | Refunds & cancellations | Admin refund/cancel/return/chargeback (full or per item) + Shopify webhooks; unpaid accruals reversed, paid ones clawed back, all audited |
-| 23–24 | Team Leader & Manager dashboards | Portal overview, Team and Organisation tabs |
-| 25 | Admin dashboard | Admin → Dashboard: daily/weekly/monthly/annual sales, retail vs reseller, units/revenue/cost/GP/stock, best & slow sellers, reseller counts, top sellers/teams, organisation & incentive totals |
+| 23–24 | Team Leader & Manager dashboards | Portal overview, Team and Organisation tabs, six-month history, member contact (WhatsApp), Manager performance report CSV |
+| 25 | Admin dashboard | Admin → Dashboard: daily/weekly/monthly/annual sales, retail vs reseller, units/revenue/cost/GP/stock, best & slow sellers, reseller counts, top sellers/teams, organisation & incentive totals, average order value, 12-month sales trend |
 | 26 | Configurable compensation | Admin → Settings & content (stored in `compensation_settings`, audited) |
-| 27 | Marketing portal | Admin → Marketing (links to Drive/Dropbox/Shopify Files); visibility by rank |
+| 27 | Marketing portal | Admin → Marketing: upload files (≤ 4 MB, served from unguessable `/api/files/…` links) or link Drive/Dropbox/Shopify Files; edit materials; visibility by rank. Product images can be uploaded the same way |
 | 28 | Referral tools | Referral URL `/r/CODE`, QR code (downloadable), code, WhatsApp/Facebook/Instagram share, copy link |
 | 29 | Customer account & corporate enquiry | `pages/account.tsx` (orders, tracking, saved address, profile, wishlist, reorder, referral) and `/corporate` form → Admin → Enquiries |
 | 30 | Inventory & low stock | Stock / reserved / sold per product; stock reserved at checkout; LOW STOCK ALERT notifications and dashboard |
 | 32 | Reports + CSV/Excel | Admin → Reports: daily, weekly, monthly (incl. net contribution before overhead), products, resellers, teams, commissions, orders; CSV with UTF-8 BOM for Excel; contribution vs target widget |
 | 34 | Security | Clerk auth, role-based guards, admin-only settings, audit log, duplicate-claim unique index, self-referral block, same-origin CORS, rate limiting on public writes, HMAC-verified webhooks, formula-safe CSV |
 | 35 | Fraud & abuse | Flags for self-referral, duplicate orders, duplicate accounts/applications, suspicious referrals, refund-related commissions, unusual order velocity; accounts can be set to Review / Hold / Suspended |
-| 36 | Notifications | In-app for every listed event, email via Resend when configured (`lib/notify.ts`) |
+| 36 | Notifications | In-app for every listed event (including account created), email via Resend when configured (`lib/notify.ts`). Admin → Marketing → Announcements sends campaigns to everyone, customers (marketing opt-in only, POPIA), resellers, Team Leaders or Managers |
 | 37 | WhatsApp | "Order via website", "Chat on WhatsApp", "Share product", "Share reseller link" buttons |
 | 38 | Mobile-first | Responsive layouts; portal and admin tables scroll horizontally on phones |
 | 39 | Required pages | All 23 routes in `App.tsx` (plus cart, checkout, order tracking) |
 | 40–41 | SEO & analytics | Per-page titles/descriptions/canonicals, Product/FAQ/ItemList/Organization JSON-LD, alt text, `/api/sitemap.xml`, robots.txt; GA4, Meta Pixel, TikTok Pixel behind a cookie banner with product view / add to cart / checkout / purchase / lead / referral events |
 | 44 | Proper data model | See `lib/db/src/schema/masmila.ts` |
-| 48 | Acceptance tests | Demo data above + `pnpm --filter @workspace/api-server test` |
+| 48 | Acceptance tests | Demo data above + `pnpm --filter @workspace/api-server test` (16 engine tests); every §48 flow verified end-to-end against the API and in the browser |
 
 ## Integration recommendations (§7, §46)
 

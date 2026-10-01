@@ -1,6 +1,6 @@
 import { type FormEvent, Fragment, useEffect, useMemo, useState } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { Download, Plus, Search } from 'lucide-react';
+import { Download, Megaphone, Plus, Search, Upload } from 'lucide-react';
 import {
   customFetch,
   getGetAdminReportQueryKey,
@@ -43,6 +43,9 @@ import {
   useListAdminTeams,
   useListAuditLogs,
   useListFraudFlags,
+  useSendAnnouncement,
+  useUpdateMarketingMaterial,
+  useUploadFile,
   useRefundAdminOrder,
   useRunQualification,
   useUpdateAdminCustomer,
@@ -54,6 +57,8 @@ import {
   useUpdateFraudFlag,
   useUpdateSiteContent,
   type AdminProduct,
+  type AnnouncementInput,
+  type MarketingMaterial,
   type AdminSettings,
   type AdminSettingsInput,
   type Order,
@@ -62,6 +67,7 @@ import {
   type ReportType,
 } from '@workspace/api-client-react';
 import { EmptyState, ErrorState, LoadingBlock, StatusPill } from '@/components/bits';
+import { toast } from '@/hooks/use-toast';
 import { currentPeriod, dateOnly, dateTime, errorMessage, humanise, money, periodLabel, rankLabel, shiftPeriod } from '@/lib/format';
 
 function useInvalidate() {
@@ -264,7 +270,7 @@ function ProductEditor({ initial, onSave, pending, error, submitLabel }: { initi
         <div className="field"><label>Top notes (comma separated)</label><input value={notes('topNotes')} onChange={(e) => set('topNotes', e.target.value.split(',').map((s) => s.trim()).filter(Boolean))} /></div>
         <div className="field"><label>Middle notes</label><input value={notes('middleNotes')} onChange={(e) => set('middleNotes', e.target.value.split(',').map((s) => s.trim()).filter(Boolean))} /></div>
         <div className="field"><label>Base notes</label><input value={notes('baseNotes')} onChange={(e) => set('baseNotes', e.target.value.split(',').map((s) => s.trim()).filter(Boolean))} /></div>
-        {text('image', 'Image URL', true)}{text('imageAlt', 'Image alt text', true)}{text('keywords', 'Search keywords', true)}
+        <div className="field full"><label>Product image</label><div className="inline-edit grow"><input value={String(p.image ?? '')} onChange={(e) => set('image', e.target.value)} placeholder="https://… or upload" /><FileUploadButton accept="image/*" label="Upload image" onUploaded={(url) => set('image', url)} /></div></div>{text('imageAlt', 'Image alt text', true)}{text('keywords', 'Search keywords', true)}
         <div className="field"><label>Shopify variant ID</label><input value={p.shopifyVariantId ?? ''} onChange={(e) => set('shopifyVariantId', e.target.value || null)} placeholder="gid://shopify/ProductVariant/…" /></div>
       </div>
       <div className="action-row">
@@ -558,10 +564,98 @@ export function FraudSection() {
 
 // ------------------------------------------------------------------ marketing
 
+/** Uploads a file (≤ 4 MB) and returns its URL; used for marketing materials and product images. */
+export function FileUploadButton({ onUploaded, accept, label = 'Upload file' }: { onUploaded: (url: string, name: string) => void; accept?: string; label?: string }) {
+  const upload = useUploadFile({ mutation: { meta: { success: 'File uploaded' } } });
+  const [error, setError] = useState<string | null>(null);
+  const pick = (file: File | undefined) => {
+    setError(null);
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) { setError('Files can be up to 4 MB — link larger files (e.g. videos) instead.'); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const data = String(reader.result).split(',')[1] ?? '';
+      upload.mutate({ data: { name: file.name, contentType: file.type || 'application/octet-stream', data } }, { onSuccess: (r) => onUploaded(r.url, r.name) });
+    };
+    reader.readAsDataURL(file);
+  };
+  return (
+    <span className="upload-btn">
+      <label className="btn-ghost small"><Upload size={14} /> {upload.isPending ? 'Uploading…' : label}<input type="file" hidden accept={accept} onChange={(e) => pick(e.target.files?.[0])} disabled={upload.isPending} /></label>
+      {error ? <small className="bad-text">{error}</small> : null}
+      <MutationError error={upload.error} />
+    </span>
+  );
+}
+
+const MATERIAL_CATEGORIES = ['product_images', 'descriptions', 'social', 'whatsapp', 'price_list', 'catalogue', 'campaign', 'video', 'training'];
+const RANK_OPTIONS: Array<[string, string]> = [['reseller', 'All resellers'], ['team_leader', 'Team Leaders & above'], ['manager', 'Managers & above']];
+
+function MaterialRow({ m }: { m: MarketingMaterial }) {
+  const update = useUpdateMarketingMaterial({ mutation: { meta: { success: 'Material updated' } } });
+  const remove = useDeleteMarketingMaterial({ mutation: { meta: { success: 'Material removed' } } });
+  const invalidate = useInvalidate();
+  const [edit, setEdit] = useState<null | { title: string; description: string; category: string; minRank: string; url: string }>(null);
+  const done = { onSuccess: () => { setEdit(null); invalidate(getListAdminMarketingMaterialsQueryKey()); } };
+  if (edit) {
+    return (
+      <tr className="detail-row"><td colSpan={4}>
+        <div className="form-grid three">
+          <div className="field"><label>Title</label><input value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} /></div>
+          <div className="field"><label>Category</label><select value={edit.category} onChange={(e) => setEdit({ ...edit, category: e.target.value })}>{MATERIAL_CATEGORIES.map((c) => <option key={c} value={c}>{humanise(c)}</option>)}</select></div>
+          <div className="field"><label>Visible to</label><select value={edit.minRank} onChange={(e) => setEdit({ ...edit, minRank: e.target.value })}>{RANK_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
+          <div className="field full"><label>File or link</label><div className="inline-edit grow"><input value={edit.url} onChange={(e) => setEdit({ ...edit, url: e.target.value })} /><FileUploadButton label="Replace file" onUploaded={(url) => setEdit({ ...edit, url })} /></div></div>
+          <div className="field full"><label>Description</label><input value={edit.description} onChange={(e) => setEdit({ ...edit, description: e.target.value })} /></div>
+        </div>
+        <div className="action-row"><button className="btn-primary small" disabled={update.isPending} onClick={() => update.mutate({ id: m.id, data: edit }, done)}>Save</button><button className="btn-ghost small" onClick={() => setEdit(null)}>Cancel</button></div>
+        <MutationError error={update.error} />
+      </td></tr>
+    );
+  }
+  return (
+    <tr>
+      <td><a href={m.url} target="_blank" rel="noreferrer"><strong>{m.title}</strong></a><small>{m.description}</small>{m.url.startsWith('/api/files/') ? <small>Uploaded file</small> : null}</td>
+      <td>{humanise(m.category)}</td><td>{rankLabel(m.minRank)}+</td>
+      <td className="num">
+        <button className="btn-ghost small" onClick={() => setEdit({ title: m.title, description: m.description, category: m.category, minRank: m.minRank, url: m.url })}>Edit</button>{' '}
+        <button className="btn-ghost small danger" onClick={() => remove.mutate({ id: m.id }, { onSuccess: () => invalidate(getListAdminMarketingMaterialsQueryKey()) })}>Remove</button>
+      </td>
+    </tr>
+  );
+}
+
+/** Promotional campaigns / announcements as in-app (and email) notifications. */
+function AnnouncementCard() {
+  const send = useSendAnnouncement();
+  const [form, setForm] = useState<AnnouncementInput>({ audience: 'resellers', title: '', body: '', link: '', marketingOnly: true });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    send.mutate({ data: { ...form, link: form.link || null } }, {
+      onSuccess: (r) => { toast({ title: `Sent to ${r.count} ${r.count === 1 ? 'person' : 'people'}` }); setForm({ ...form, title: '', body: '', link: '' }); },
+    });
+  };
+  return (
+    <form className="dash-card" onSubmit={submit} data-testid="form-announcement">
+      <h3><Megaphone size={16} /> Send an announcement</h3>
+      <p className="muted small-text">Launches, promotions, campaigns or team news — delivered as a notification (and email when email is configured).</p>
+      <div className="form-grid three">
+        <div className="field"><label>Send to</label><select value={form.audience} onChange={(e) => setForm({ ...form, audience: e.target.value as AnnouncementInput['audience'] })} data-testid="select-audience">
+          <option value="resellers">All resellers</option><option value="team_leaders">Team Leaders & Managers</option><option value="managers">Managers</option><option value="customers">Customers</option><option value="everyone">Everyone</option>
+        </select></div>
+        <div className="field"><label>Title</label><input required minLength={2} maxLength={120} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="New: Jacaranda 100ml" data-testid="input-announcement-title" /></div>
+        <div className="field"><label>Link (optional)</label><input value={form.link ?? ''} onChange={(e) => setForm({ ...form, link: e.target.value })} placeholder="/shop/new-arrivals" /></div>
+        <div className="field full"><label>Message</label><textarea required minLength={2} maxLength={2000} rows={3} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} data-testid="input-announcement-body" /></div>
+      </div>
+      {form.audience === 'customers' ? <label className="check-row"><input type="checkbox" checked={form.marketingOnly !== false} onChange={(e) => setForm({ ...form, marketingOnly: e.target.checked })} /> Only customers who opted in to marketing (required for promotions under POPIA)</label> : null}
+      <div className="action-row"><button className="btn-primary small" type="submit" disabled={send.isPending} data-testid="button-send-announcement">{send.isPending ? 'Sending…' : 'Send announcement'}</button></div>
+      <MutationError error={send.error} />
+    </form>
+  );
+}
+
 export function MarketingSection() {
   const materials = useListAdminMarketingMaterials({ query: { queryKey: getListAdminMarketingMaterialsQueryKey() } });
   const create = useCreateMarketingMaterial({ mutation: { meta: { success: 'Material added' } } });
-  const remove = useDeleteMarketingMaterial({ mutation: { meta: { success: 'Material removed' } } });
   const invalidate = useInvalidate();
   const [form, setForm] = useState({ title: '', category: 'social', url: '', description: '', minRank: 'reseller' });
   const submit = (e: FormEvent) => {
@@ -570,22 +664,26 @@ export function MarketingSection() {
   };
   return (
     <section>
-      <form className="dash-card" onSubmit={submit}>
-        <h3>Add material</h3>
-        <p className="muted small-text">Upload files to your Google Drive / Dropbox / Shopify Files and paste the share link.</p>
+      <AnnouncementCard />
+      <form className="dash-card mt" onSubmit={submit} data-testid="form-material">
+        <h3>Add marketing material</h3>
+        <p className="muted small-text">Upload images, PDFs, price lists or slides (up to 4 MB), or paste a link for larger files such as videos.</p>
         <div className="form-grid three">
           <div className="field"><label>Title</label><input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
-          <div className="field"><label>Category</label><select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{['product_images', 'descriptions', 'social', 'whatsapp', 'price_list', 'catalogue', 'campaign', 'video', 'training'].map((c) => <option key={c} value={c}>{humanise(c)}</option>)}</select></div>
-          <div className="field"><label>Visible to</label><select value={form.minRank} onChange={(e) => setForm({ ...form, minRank: e.target.value })}><option value="reseller">All resellers</option><option value="team_leader">Team Leaders & above</option><option value="manager">Managers & above</option></select></div>
-          <div className="field full"><label>Link (https://…)</label><input required type="url" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} /></div>
+          <div className="field"><label>Category</label><select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{MATERIAL_CATEGORIES.map((c) => <option key={c} value={c}>{humanise(c)}</option>)}</select></div>
+          <div className="field"><label>Visible to</label><select value={form.minRank} onChange={(e) => setForm({ ...form, minRank: e.target.value })}>{RANK_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
+          <div className="field full"><label>File or link</label>
+            <div className="inline-edit grow"><input required value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} placeholder="https://… or upload a file" data-testid="input-material-url" />
+              <FileUploadButton onUploaded={(url, name) => setForm((f) => ({ ...f, url, title: f.title || name.replace(/\.[^.]+$/, '') }))} /></div>
+          </div>
           <div className="field full"><label>Description</label><input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
         </div>
-        <div className="action-row"><button className="btn-primary small" type="submit" disabled={create.isPending}>Add material</button></div>
+        <div className="action-row"><button className="btn-primary small" type="submit" disabled={create.isPending} data-testid="button-add-material">Add material</button></div>
         <MutationError error={create.error} />
       </form>
       {materials.data?.length ? (
         <div className="table-wrap mt"><table className="table compact"><thead><tr><th>Material</th><th>Category</th><th>Visible to</th><th /></tr></thead>
-          <tbody>{materials.data.map((m) => <tr key={m.id}><td><a href={m.url} target="_blank" rel="noreferrer"><strong>{m.title}</strong></a><small>{m.description}</small></td><td>{humanise(m.category)}</td><td>{rankLabel(m.minRank)}+</td><td><button className="btn-ghost small danger" onClick={() => remove.mutate({ id: m.id }, { onSuccess: () => invalidate(getListAdminMarketingMaterialsQueryKey()) })}>Remove</button></td></tr>)}</tbody></table></div>
+          <tbody>{materials.data.map((m) => <MaterialRow key={m.id} m={m} />)}</tbody></table></div>
       ) : null}
     </section>
   );
@@ -593,8 +691,8 @@ export function MarketingSection() {
 
 // ------------------------------------------------------------------ settings & content
 
-const SETTING_GROUPS: Array<{ title: string; note?: string; fields: Array<[keyof AdminSettings, string, 'int' | 'num' | 'bool']> }> = [
-  { title: 'Reseller ordering', fields: [['openingOrder', 'Minimum opening order (bottles)', 'int'], ['reorderMinimum', 'Re-order minimum (bottles)', 'int']] },
+const SETTING_GROUPS: Array<{ title: string; note?: string; fields: Array<[keyof AdminSettings, string, 'int' | 'num' | 'bool' | 'text']> }> = [
+  { title: 'Reseller ordering', note: 'Bulk pricing: "bottles:% off" pairs, e.g. 50:5,100:10 = 5% off reseller price from 50 bottles, 10% from 100. Leave empty for none.', fields: [['openingOrder', 'Minimum opening order (bottles)', 'int'], ['reorderMinimum', 'Re-order minimum (bottles)', 'int'], ['bulkDiscountTiers', 'Bulk pricing tiers', 'text']] },
   { title: 'Incentive percentages', note: 'Applied to qualifying wholesale product sales. Changes apply to new calculations.', fields: [['teamLeaderRate', 'Team Leader incentive (%)', 'num'], ['managerRate', 'Manager incentive (%)', 'num'], ['directorRate', 'Director incentive (%)', 'num'], ['directorEnabled', 'Director level enabled (Phase 3)', 'bool'], ['referralRate', 'Online referral sale commission (%) — optional', 'num'], ['countAttributedRetail', 'Count referral-link customer sales as reseller volume', 'bool']] },
   { title: 'Active reseller definition & inactivity', fields: [['activeMinBottles', 'Bottles per month to stay active', 'int'], ['reactivationBottles', 'Bottles in a month to reactivate', 'int'], ['rankGraceMonths', 'Warning (coaching) months before a leader reverts', 'int']] },
   { title: 'Team Leader requirements', fields: [['tlActiveDirects', 'Active direct resellers', 'int'], ['personalTarget', 'Personal bottles / month', 'int'], ['teamTarget', 'Qualifying team bottles / month', 'int']] },
@@ -638,6 +736,8 @@ export function SettingsSection() {
                   <label htmlFor={`setting-${key}`}>{label}</label>
                   {type === 'bool'
                     ? <input id={`setting-${key}`} type="checkbox" checked={Boolean(form[key])} onChange={(e) => setForm({ ...form, [key]: e.target.checked })} />
+                    : type === 'text'
+                    ? <input id={`setting-${key}`} className="setting-text" placeholder="50:5,100:10" value={String(form[key] ?? '')} onChange={(e) => setForm({ ...form, [key]: e.target.value.replace(/\s/g, '') })} data-testid={`input-setting-${key}`} />
                     : <input id={`setting-${key}`} type="number" min={0} step={type === 'num' ? '0.01' : '1'} value={Number(form[key] ?? 0)} onChange={(e) => setForm({ ...form, [key]: Number(e.target.value) })} data-testid={`input-setting-${key}`} />}
                 </div>
               ))}
