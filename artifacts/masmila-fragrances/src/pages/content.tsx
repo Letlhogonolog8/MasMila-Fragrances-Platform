@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useState } from 'react';
 import { Link } from 'wouter';
-import { ArrowRight, Check, MessageCircle } from 'lucide-react';
+import { ArrowRight, Check } from 'lucide-react';
+import { WhatsAppIcon } from '@/components/whatsapp-icon';
 import { useSubmitEnquiry, type EnquiryInput } from '@workspace/api-client-react';
 import { useStoreConfig, whatsappLink } from '@/components/site';
 import { errorMessage, money } from '@/lib/format';
@@ -128,7 +129,7 @@ export function ContactPage() {
   return (
     <main className="container-wide form-shell">
       <div className="form-aside"><span className="eyebrow">Contact</span><h1 className="display-lg">We're here to help.</h1><p className="body-lg">Questions about a fragrance, an order or becoming a reseller? WhatsApp is the fastest way to reach us.</p>
-        {config.data?.whatsappNumber ? <a className="btn-primary" href={whatsappLink(config.data.whatsappNumber, "Hi Mas'Mila!")} target="_blank" rel="noreferrer"><MessageCircle size={15} /> CHAT ON WHATSAPP</a> : null}
+        {config.data?.whatsappNumber ? <a className="btn-primary" href={whatsappLink(config.data.whatsappNumber, "Hi Mas'Mila!")} target="_blank" rel="noreferrer"><WhatsAppIcon size={15} /> CHAT ON WHATSAPP</a> : null}
         <div className="aside-note">Email: hello@masmila.co.za<br />Hours: Mon–Fri 08:00–17:00, Sat 09:00–13:00<br /><Link href="/track-order">Track an order →</Link></div>
       </div>
       <EnquiryForm kind="contact" />

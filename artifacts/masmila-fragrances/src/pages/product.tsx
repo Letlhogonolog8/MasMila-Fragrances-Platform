@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'wouter';
-import { ArrowRight, MessageCircle, Minus, Plus } from 'lucide-react';
+import { ArrowRight, Minus, Plus } from 'lucide-react';
+import { WhatsAppIcon } from '@/components/whatsapp-icon';
 import { getGetProductQueryKey, useGetProduct } from '@workspace/api-client-react';
 import { ErrorState, LoadingBlock, PriceBlock, ProductCard, ProductVisual, ShareButtons, WishlistButton } from '@/components/bits';
 import { useStoreConfig, whatsappLink } from '@/components/site';
@@ -85,7 +86,7 @@ export default function ProductPage({ slug }: { slug: string }) {
           {cart.lastAdded?.productId === p.id ? <p className="notice">Added to your bag. <Link href="/cart">View bag & checkout →</Link></p> : null}
           <div className="share-row">
             <WishlistButton productId={p.id} />
-            {config.data?.whatsappNumber ? <a className="btn-ghost" href={whatsappLink(config.data.whatsappNumber, `Hi Mas'Mila, I'd like to order ${p.name} ${p.size} (${p.sku}).`)} target="_blank" rel="noreferrer" data-testid="link-order-whatsapp"><MessageCircle size={15} /> Ask on WhatsApp</a> : null}
+            {config.data?.whatsappNumber ? <a className="btn-ghost" href={whatsappLink(config.data.whatsappNumber, `Hi Mas'Mila, I'd like to order ${p.name} ${p.size} (${p.sku}).`)} target="_blank" rel="noreferrer" data-testid="link-order-whatsapp"><WhatsAppIcon size={15} /> Ask on WhatsApp</a> : null}
           </div>
           <div className="share-block"><span className="eyebrow">Share this product</span><ShareButtons url={shareUrl} text={`${p.name} ${p.size} by Mas'Mila — ${p.scentProfile.toLowerCase()}.`} /></div>
         </div>

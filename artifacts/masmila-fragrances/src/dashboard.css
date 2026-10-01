@@ -170,7 +170,6 @@
 .dark .table tr.warn-row td { background: hsl(38 40% 14%); }
 .dark .ok-text { color: hsl(145 50% 62%); }
 .dark .qr img { border-color: white; }
-.dark .whatsapp-float { color: #04210f; }
 
 /* ------------------------------------------------------------ responsive */
 @media (max-width: 1100px) {
@@ -188,7 +187,7 @@
   .bb-icon { position: relative; display: grid; place-items: center; width: 44px; height: 28px; border-radius: 99px; }
   .bottom-bar button.on .bb-icon { background: hsl(var(--primary) / .12); }
   .bb-icon em { position: absolute; top: 2px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: hsl(var(--primary)); }
-  .whatsapp-float { bottom: 84px; }
+  body:has(.bottom-bar) .whatsapp-float { bottom: 84px; }
   .qo-bar { bottom: 76px; }
 }
 @media (max-width: 680px) {

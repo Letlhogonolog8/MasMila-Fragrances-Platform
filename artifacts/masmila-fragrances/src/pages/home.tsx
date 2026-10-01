@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'wouter';
 import {
-  ArrowRight, BadgeCheck, Facebook, Gift, Instagram, MessageCircle, Music2, Quote, RotateCcw, ShieldCheck, Sparkles, Star, Truck,
+  ArrowRight, BadgeCheck, Facebook, Gift, Instagram, Music2, Quote, RotateCcw, ShieldCheck, Sparkles, Star, Truck,
 } from 'lucide-react';
+import { WhatsAppIcon } from '@/components/whatsapp-icon';
 import { getGetHomeSummaryQueryKey, useGetHomeSummary, type Product } from '@workspace/api-client-react';
 import { ErrorState, LoadingGrid, ProductCard } from '@/components/bits';
 import { Newsletter, useStoreConfig, whatsappLink } from '@/components/site';
@@ -211,7 +212,7 @@ export default function HomePage() {
             <p className="body-lg">Join the list, or chat to us for help choosing the right scent or gift.</p>
             <div className="hero-actions">
               <Link className="btn-primary" href="/shop">ORDER VIA WEBSITE <ArrowRight size={15} /></Link>
-              {config.data?.whatsappNumber ? <a className="btn-ghost" href={whatsappLink(config.data.whatsappNumber, "Hi Mas'Mila, I'd like help choosing a fragrance.")} target="_blank" rel="noreferrer"><MessageCircle size={15} /> CHAT ON WHATSAPP</a> : null}
+              {config.data?.whatsappNumber ? <a className="btn-ghost" href={whatsappLink(config.data.whatsappNumber, "Hi Mas'Mila, I'd like help choosing a fragrance.")} target="_blank" rel="noreferrer"><WhatsAppIcon size={15} /> CHAT ON WHATSAPP</a> : null}
             </div>
           </div>
           <Newsletter light defaultChannel="whatsapp" />

@@ -1,7 +1,8 @@
 import { artworkFor, imageFor } from '@/lib/bottle';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Link, useLocation } from 'wouter';
-import { ArrowRight, Check, Copy, Facebook, Heart, Instagram, MessageCircle, Share2 } from 'lucide-react';
+import { ArrowRight, Check, Copy, Facebook, Heart, Instagram, Share2 } from 'lucide-react';
+import { WhatsAppIcon } from '@/components/whatsapp-icon';
 import QRCode from 'qrcode';
 import { useQueryClient } from '@tanstack/react-query';
 import { getListWishlistQueryKey, useAddToWishlist, useListWishlist, useRemoveFromWishlist, type Product } from '@workspace/api-client-react';
@@ -164,7 +165,7 @@ export function ShareButtons({ url, text }: { url: string; text: string }) {
   };
   return (
     <div className="share-row">
-      <a className="btn-ghost small" href={`https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`} target="_blank" rel="noreferrer" data-testid="button-share-whatsapp"><MessageCircle size={14} /> WhatsApp</a>
+      <a className="btn-ghost small" href={`https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`} target="_blank" rel="noreferrer" data-testid="button-share-whatsapp"><WhatsAppIcon size={14} /> WhatsApp</a>
       <a className="btn-ghost small" href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`} target="_blank" rel="noreferrer" data-testid="button-share-facebook"><Facebook size={14} /> Facebook</a>
       <button className="btn-ghost small" type="button" onClick={() => void nativeShare()} data-testid="button-share-instagram"><Instagram size={14} /> Instagram</button>
       <button className="btn-ghost small" type="button" onClick={() => void nativeShare()} aria-label="More sharing options"><Share2 size={14} /></button>

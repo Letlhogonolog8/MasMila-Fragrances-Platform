@@ -2,9 +2,10 @@ import { imageFor } from '@/lib/bottle';
 import { useMemo, useState } from 'react';
 import { Link, useLocation, useSearch } from 'wouter';
 import {
-  AlertTriangle, Award, BadgeDollarSign, Download, Bell, Crown, ExternalLink, Gauge, Megaphone, MessageCircle, Minus, Network,
+  AlertTriangle, Award, BadgeDollarSign, Download, Bell, Crown, ExternalLink, Gauge, Megaphone, Minus, Network,
   Package, Plus, QrCode as QrIcon, Search, ShoppingBag, Sparkles, Target, TrendingUp, Users, Zap,
 } from 'lucide-react';
+import { WhatsAppIcon } from '@/components/whatsapp-icon';
 import {
   getGetResellerDashboardQueryKey,
   getGetResellerOrganisationQueryKey,
@@ -213,7 +214,7 @@ function TeamLeaderboard({ members, target, leaderName }: { members: TeamMember[
             </div>
             <div className="lb-actions">
               <StatusPill status={m.status} />
-              {nudge ? <a className="btn-ghost small" href={nudge} target="_blank" rel="noreferrer" data-testid={`nudge-${m.resellerCode}`}><MessageCircle size={13} /> {m.status === 'Inactive' ? 'Check in' : 'Cheer'}</a> : null}
+              {nudge ? <a className="btn-ghost small" href={nudge} target="_blank" rel="noreferrer" data-testid={`nudge-${m.resellerCode}`}><WhatsAppIcon size={13} /> {m.status === 'Inactive' ? 'Check in' : 'Cheer'}</a> : null}
             </div>
           </div>
         );
@@ -306,7 +307,7 @@ function OrganisationTab({ d }: { d: ResellerDashboard }) {
                   <Ring value={pct} size={70} stroke={7} tone={pct >= 100 ? 'good' : 'primary'} />
                   <div><strong>{tl.name}</strong><small>{tl.rank} · {tl.resellerCode}</small>
                     <div className="org-stats"><span><b>{tl.teamBottles}</b> team</span><span><b>{tl.personalBottles}</b> own</span><span><b>{tl.directs}</b> directs</span></div>
-                    {chat ? <a className="small-link" href={chat} target="_blank" rel="noreferrer"><MessageCircle size={12} /> WhatsApp</a> : null}
+                    {chat ? <a className="small-link" href={chat} target="_blank" rel="noreferrer"><WhatsAppIcon size={12} /> WhatsApp</a> : null}
                   </div>
                 </div>
               );

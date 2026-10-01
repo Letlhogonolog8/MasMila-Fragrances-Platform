@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { Link, useLocation } from 'wouter';
-import { Bell, Menu, MessageCircle, ShoppingBag, User, X } from 'lucide-react';
+import { Bell, Menu, ShoppingBag, User, X } from 'lucide-react';
+import { WhatsAppIcon } from '@/components/whatsapp-icon';
 import { useGetStoreConfig, useSubscribeNewsletter, getGetStoreConfigQueryKey } from '@workspace/api-client-react';
 import { useCart } from '@/lib/cart';
 import { useMe } from '@/lib/auth';
@@ -151,7 +152,7 @@ export function WhatsAppFloat() {
   if (!config.data?.whatsappNumber || location.startsWith('/admin')) return null;
   return (
     <a className="whatsapp-float" href={whatsappLink(config.data.whatsappNumber, "Hi Mas'Mila, I'd like help choosing a fragrance.")} target="_blank" rel="noreferrer" aria-label="Chat on WhatsApp" data-testid="link-whatsapp-chat">
-      <MessageCircle size={20} /><span>Chat on WhatsApp</span>
+      <WhatsAppIcon size={30} /><span>Chat on WhatsApp</span>
     </a>
   );
 }
