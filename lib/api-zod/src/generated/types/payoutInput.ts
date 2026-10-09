@@ -7,6 +7,11 @@
  */
 
 export interface PayoutInput {
+  /**
+     * Payout period; must have been closed by the month-end qualification run. Approved incentives of this and earlier periods are included.
+     * @pattern ^[0-9]{4}-[0-9]{2}$
+     */
+  period: string;
   resellerIds?: number[];
   /** @nullable */
   reference?: string | null;

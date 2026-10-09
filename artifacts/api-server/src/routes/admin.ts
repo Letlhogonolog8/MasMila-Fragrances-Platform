@@ -67,6 +67,9 @@ import {
   UploadFileBody,
   UploadFileResponse,
   UpdateAdminResellerResponse,
+  UpdateAdminPayoutBody,
+  UpdateAdminPayoutParams,
+  UpdateAdminPayoutResponse,
   UpdateFraudFlagResponse,
   UpdateAdminEnquiryResponse,
 } from "@workspace/api-zod";
@@ -96,7 +99,8 @@ import { requireAdmin } from "../lib/auth";
 import { available } from "../lib/catalog";
 import { RANK_LABELS, rankValue } from "../lib/engine";
 import { badRequest, HttpError, iso, notFound, round2 } from "../lib/http";
-import { evaluatePeriod, PAID_STATUSES, resellerNames, runQualification } from "../lib/network";
+import { evaluatePeriod, PAID_STATUSES, resellerNames } from "../lib/network";
+import { runMonthEnd } from "../lib/jobs";
 import { currentPeriod, periodBounds, previousPeriod, sastDateLabel, shiftPeriod, startOfDay } from "../lib/period";
 import { getSettings, updateSettings } from "../lib/settings";
 import { audit } from "../lib/audit";
@@ -105,6 +109,11 @@ import { getOrderView, refundOrder, serializeOrders, updateFulfilment } from "..
 import { duplicateIdentityWarnings } from "../lib/fraud";
 import { isUniqueViolation, randomCode, referralCodeFor, resellerCodeFor, slugify } from "../lib/codes";
 import { buildReport, toCsv, type ReportType } from "../lib/reports";
+import { calculatePayouts, transitionPayout } from "../lib/payouts";
+import { auditIn, lockLedger } from "../lib/tx";
+import { alias } from "drizzle-orm/pg-core";
+
+const parentLedger = alias(commissionLedgerTable, "parent_ledger");
 import { serializeLedger } from "./reseller";
 import { siteContent } from "./catalog";
 
@@ -385,7 +394,16 @@ router.post("/admin/applications/:id/decision", async (req, res) => {
       .values({ email, role: "reseller", firstName: app.firstName, surname: app.surname, mobile: app.mobile, city: app.city, province: app.province })
       .onConflictDoUpdate({
         target: usersTable.email,
-        set: { role: sql`case when ${usersTable.role} = 'admin' then 'admin' else 'reseller' end`, mobile: sql`coalesce(${usersTable.mobile}, ${app.mobile})` },
+        // An applicant who signed in before applying has an account without these details:
+        // fill the blanks from the application (never overwrite what the person entered).
+        set: {
+          role: sql`case when ${usersTable.role} = 'admin' then 'admin' else 'reseller' end`,
+          mobile: sql`coalesce(${usersTable.mobile}, ${app.mobile})`,
+          firstName: sql`coalesce(nullif(${usersTable.firstName}, ''), ${app.firstName})`,
+          surname: sql`coalesce(nullif(${usersTable.surname}, ''), ${app.surname})`,
+          city: sql`coalesce(nullif(${usersTable.city}, ''), ${app.city})`,
+          province: sql`coalesce(nullif(${usersTable.province}, ''), ${app.province})`,
+        },
       })
       .returning();
     const [existing] = await db.select({ id: resellersTable.id }).from(resellersTable).where(eq(resellersTable.userId, user!.id));
@@ -752,7 +770,8 @@ router.patch("/admin/orders/:id", async (req, res) => {
 router.post("/admin/orders/:id/refund", async (req, res) => {
   const { id } = RefundAdminOrderParams.parse(req.params);
   const input = RefundAdminOrderBody.parse(req.body);
-  await refundOrder(id, input, req.currentUser!);
+  const { idempotencyKey, ...refund } = input;
+  await refundOrder(id, { ...refund, source: "admin", externalId: idempotencyKey ?? null }, req.currentUser!);
   res.json(RefundAdminOrderResponse.parse(await getOrderView(id, { admin: true })));
 });
 
@@ -769,25 +788,51 @@ router.get("/admin/commissions", async (req, res) => {
 
 router.post("/admin/commissions/approve", async (req, res) => {
   const { ids } = ApproveCommissionsBody.parse(req.body);
-  // Accruals must be confirmed by a month-end qualification run first.
-  const updated = await db
-    .update(commissionLedgerTable)
-    .set({ status: "approved", approvedAt: new Date(), updatedAt: new Date() })
-    .where(
-      and(
-        inArray(commissionLedgerTable.id, ids),
-        eq(commissionLedgerTable.status, "pending"),
-        or(eq(commissionLedgerTable.qualificationStatus, "qualified"), eq(commissionLedgerTable.entryType, "reversal")),
-      ),
-    )
-    .returning();
+  const admin = req.currentUser!;
+  const updated = await db.transaction(async (tx) => {
+    await lockLedger(tx);
+    // Accruals must be confirmed by a month-end qualification run first.
+    const accruals = await tx
+      .update(commissionLedgerTable)
+      .set({ status: "approved", approvedAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          inArray(commissionLedgerTable.id, ids),
+          eq(commissionLedgerTable.status, "pending"),
+          eq(commissionLedgerTable.entryType, "accrual"),
+          eq(commissionLedgerTable.qualificationStatus, "qualified"),
+        ),
+      )
+      .returning();
+    // A reversal is approved together with (never before) its accrual: the
+    // selected ones whose accrual is approved or paid, plus every pending
+    // reversal of an accrual approved just now — so the net amount is paid.
+    const approvedAccrualIds = accruals.map((a) => a.id);
+    const reversals = await tx
+      .update(commissionLedgerTable)
+      .set({ status: "approved", approvedAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(commissionLedgerTable.entryType, "reversal"),
+          eq(commissionLedgerTable.status, "pending"),
+          or(inArray(commissionLedgerTable.id, ids), approvedAccrualIds.length ? inArray(commissionLedgerTable.reversalOfId, approvedAccrualIds) : undefined),
+          inArray(
+            commissionLedgerTable.reversalOfId,
+            tx.select({ id: parentLedger.id }).from(parentLedger).where(inArray(parentLedger.status, ["approved", "paid"])),
+          ),
+        ),
+      )
+      .returning();
+    const rows = [...accruals, ...reversals];
+    await auditIn(tx, "commissions_approved", "commission_ledger", null, admin, { ids: rows.map((r) => r.id), requested: ids.length });
+    return rows;
+  });
   const byBeneficiary = new Map<number, number>();
   for (const row of updated) byBeneficiary.set(row.beneficiaryResellerId, (byBeneficiary.get(row.beneficiaryResellerId) ?? 0) + row.amount);
   for (const [resellerId, amount] of byBeneficiary) {
     const [r] = await db.select().from(resellersTable).where(eq(resellersTable.id, resellerId));
-    if (r) await notifyUser(r.userId, "incentive_approved", "Incentive approved", `R${round2(amount).toFixed(2)} in incentives has been approved for payment.`, "/account/reseller?tab=incentives");
+    if (r && amount > 0) await notifyUser(r.userId, "incentive_approved", "Incentive approved", `R${round2(amount).toFixed(2)} in incentives has been approved for payment.`, "/account/reseller?tab=incentives");
   }
-  await audit("commissions_approved", "commission_ledger", null, req.currentUser, { ids: updated.map((r) => r.id), requested: ids.length });
   res.json({ count: updated.length });
 });
 
@@ -799,10 +844,17 @@ async function payoutViews(ids?: number[]) {
     payoutNumber: p.payoutNumber,
     resellerName: names.get(p.resellerId)?.name ?? "",
     resellerCode: names.get(p.resellerId)?.code ?? "",
+    period: p.period,
+    status: p.status,
     amount: p.amount,
     entryCount: p.entryCount,
     reference: p.reference,
     createdAt: p.createdAt.toISOString(),
+    approvedAt: iso(p.approvedAt),
+    processingAt: iso(p.processingAt),
+    paidAt: iso(p.paidAt),
+    failedAt: iso(p.failedAt),
+    failureReason: p.failureReason,
   }));
 }
 
@@ -810,37 +862,20 @@ router.get("/admin/payouts", async (_req, res) => {
   res.json(ListAdminPayoutsResponse.parse(await payoutViews()));
 });
 
+/** Calculate pending payouts (no money moves). Repeating it creates nothing new. */
 router.post("/admin/payouts", async (req, res) => {
-  const { resellerIds, reference } = CreatePayoutsBody.parse(req.body);
-  const approved = await db
-    .select()
-    .from(commissionLedgerTable)
-    .where(and(eq(commissionLedgerTable.status, "approved"), resellerIds?.length ? inArray(commissionLedgerTable.beneficiaryResellerId, resellerIds) : undefined));
-  const byReseller = new Map<number, typeof approved>();
-  for (const row of approved) byReseller.set(row.beneficiaryResellerId, [...(byReseller.get(row.beneficiaryResellerId) ?? []), row]);
-  const created: number[] = [];
-  for (const [resellerId, rows] of byReseller) {
-    const amount = round2(rows.reduce((s, r) => s + r.amount, 0));
-    // Net clawbacks larger than earnings carry forward to the next payout.
-    if (amount <= 0) continue;
-    const [r] = await db.select().from(resellersTable).where(eq(resellersTable.id, resellerId));
-    const payoutNumber = `PO-${currentPeriod().replace("-", "")}-${r!.resellerCode.replace("MSM-", "")}-${randomCode(4)}`;
-    const payout = await db.transaction(async (tx) => {
-      const [p] = await tx
-        .insert(payoutsTable)
-        .values({ payoutNumber, resellerId, amount, entryCount: rows.length, reference: reference ?? null, createdBy: req.currentUser!.id })
-        .returning();
-      await tx
-        .update(commissionLedgerTable)
-        .set({ status: "paid", paidAt: new Date(), payoutId: p!.id, updatedAt: new Date() })
-        .where(and(inArray(commissionLedgerTable.id, rows.map((x) => x.id)), eq(commissionLedgerTable.status, "approved")));
-      return p!;
-    });
-    created.push(payout.id);
-    await notifyUser(r!.userId, "incentive_paid", "Incentive paid", `R${amount.toFixed(2)} has been paid to you (${payoutNumber}).`, "/account/reseller?tab=incentives");
-    await audit("payout_created", "payout", payoutNumber, req.currentUser, { resellerId, amount, entries: rows.length, reference });
-  }
-  res.json(CreatePayoutsResponse.parse(created.length ? await payoutViews(created) : []));
+  const { period, resellerIds, reference } = CreatePayoutsBody.parse(req.body);
+  const { created } = await calculatePayouts({ period, resellerIds, reference }, req.currentUser!);
+  res.json(CreatePayoutsResponse.parse(created.length ? await payoutViews(created.map((p) => p.id)) : []));
+});
+
+/** Record the next payout step: approved → processing → paid, or failed. No money moves. */
+router.patch("/admin/payouts/:id", async (req, res) => {
+  const { id } = UpdateAdminPayoutParams.parse(req.params);
+  const { status, reference, failureReason } = UpdateAdminPayoutBody.parse(req.body);
+  await transitionPayout(id, status, { reference, failureReason }, req.currentUser!);
+  const [view] = await payoutViews([id]);
+  res.json(UpdateAdminPayoutResponse.parse(view));
 });
 
 // ------------------------------------------------------------------ qualification
@@ -891,7 +926,10 @@ router.get("/admin/qualification", async (req, res) => {
 router.post("/admin/qualification", async (req, res) => {
   const { period } = RunQualificationBody.parse(req.body);
   if (period > currentPeriod()) throw badRequest("You cannot run qualification for a future month.");
-  await runQualification(period, req.currentUser!);
+  // Same lease as the scheduled run: never two runs of one month at once.
+  const outcome = await runMonthEnd(period, { trigger: "admin", actor: req.currentUser!, mode: "manual" });
+  if (outcome.status === "skipped") throw new HttpError(409, `Qualification for ${period} is already running. Try again when it has finished.`);
+  if (outcome.status !== "succeeded") throw new HttpError(500, `Qualification for ${period} did not complete: ${outcome.error} It has been recorded; you can run it again.`);
   res.json(RunQualificationResponse.parse(await qualificationResult(period)));
 });
 

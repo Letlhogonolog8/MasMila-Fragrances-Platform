@@ -8,6 +8,16 @@
 
 export interface AdminSettings {
   bulkDiscountTiers: string;
+  /**
+     * Hours an unpaid EFT order keeps its stock before it is cancelled; null = never
+     * @nullable
+     */
+  eftReservationHours: number | null;
+  /**
+     * Hours an unfinished Shopify checkout keeps its stock before it is cancelled; null = never
+     * @nullable
+     */
+  shopifyReservationHours: number | null;
   openingOrder: number;
   reorderMinimum: number;
   teamLeaderRate: number;

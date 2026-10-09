@@ -8,8 +8,12 @@
     "build": "node ./build.mjs",
     "build:netlify": "node ./build.mjs --netlify",
     "start": "node --enable-source-maps ./dist/index.mjs",
+    "jobs": "node --enable-source-maps ./dist/jobs.mjs",
+    "preflight": "tsx src/preflight.ts",
+    "staging-evidence": "tsx src/staging-evidence.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/lib/engine.test.ts"
+    "test": "tsx --test src/lib/engine.test.ts src/lib/runtime-env.test.ts src/lib/payments.test.ts src/__tests__/edge-safety.test.ts",
+    "test:integration": "tsx --test src/__tests__/startup.integration.test.ts src/__tests__/authorization.integration.test.ts src/__tests__/financial.integration.test.ts src/__tests__/payments.integration.test.ts src/__tests__/operations.integration.test.ts src/__tests__/launch.integration.test.ts src/__tests__/acceptance.integration.test.ts"
   },
   "dependencies": {
     "@clerk/express": "^2.1.72",

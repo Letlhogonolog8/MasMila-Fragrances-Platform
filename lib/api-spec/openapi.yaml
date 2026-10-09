@@ -152,11 +152,18 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/CheckoutInput" }
       responses:
+        "200":
+          description: Retried request (same idempotencyKey) — the order the first request created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CheckoutResult" }
         "201":
           description: Order created
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CheckoutResult" }
+        "409":
+          description: Stock no longer available, or the same checkout is still being placed
   /orders/track:
     get:
       operationId: trackOrder
@@ -645,7 +652,7 @@ paths:
     post:
       operationId: createPayouts
       tags: [admin]
-      summary: Pay out all approved incentives (optionally for selected resellers)
+      summary: Calculate pending payouts of approved incentives for a closed period (optionally for selected resellers). Moves no money.
       requestBody:
         required: true
         content:
@@ -653,12 +660,30 @@ paths:
             schema: { $ref: "#/components/schemas/PayoutInput" }
       responses:
         "200":
-          description: Payouts created
+          description: Payouts created by this request (none when they already exist or nothing is payable)
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Payout" }
+  /admin/payouts/{id}:
+    patch:
+      operationId: updateAdminPayout
+      tags: [admin]
+      summary: Record the next payout step (approved → processing → paid, or failed). Moves no money.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PayoutUpdate" }
+      responses:
+        "200":
+          description: Updated payout
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Payout" }
   /admin/qualification:
     get:
       operationId: getQualification
@@ -715,6 +740,76 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/FraudFlag" }
+  /admin/payment-events:
+    get:
+      operationId: listPaymentEvents
+      tags: [admin]
+      description: Payment notifications received from Shopify. Defaults to quarantined payments awaiting review.
+      parameters:
+        - { name: review, in: query, required: false, schema: { type: string, enum: [open, resolved, rejected, all] } }
+        - { name: reason, in: query, required: false, schema: { type: string } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 100 } }
+      responses:
+        "200":
+          description: Payment events, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PaymentEvent" }
+  /admin/payment-events/{id}:
+    get:
+      operationId: getPaymentEvent
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: One payment event with the order's other payment events and its review history
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentEventDetail" }
+  /admin/payment-events/{id}/resolve:
+    post:
+      operationId: resolvePaymentEvent
+      tags: [admin]
+      description: Records how a quarantined payment was dealt with. Never changes the order or moves money.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PaymentResolutionInput" }
+      responses:
+        "200":
+          description: The resolved event
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentEvent" }
+        "409":
+          description: Already resolved
+  /admin/jobs:
+    get:
+      operationId: getJobOverview
+      tags: [admin]
+      responses:
+        "200":
+          description: Month-end run state per month and recent job executions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobOverview" }
+  /admin/diagnostics/client-ip:
+    get:
+      operationId: getClientIpDiagnostic
+      tags: [admin]
+      description: What the server sees of the caller's address, for verifying TRUSTED_PROXY_HOPS.
+      responses:
+        "200":
+          description: Client address sources
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClientIpDiagnostic" }
   /admin/enquiries:
     get:
       operationId: listAdminEnquiries
@@ -1091,6 +1186,11 @@ components:
         attributionSource: { type: ["string", "null"] }
         notes: { type: ["string", "null"], maxLength: 1000 }
         saveAddress: { type: boolean }
+        idempotencyKey:
+          type: string
+          minLength: 16
+          maxLength: 100
+          description: Random key generated once per checkout attempt. A retried or double-submitted request with the same key returns the order the first one created (HTTP 200) instead of placing a second order.
     CheckoutResult:
       type: object
       required: [order, checkoutUrl, paymentInstructions]
@@ -1430,6 +1530,9 @@ components:
         note: { type: ["string", "null"] }
         createdAt: { type: string }
         paidAt: { type: ["string", "null"] }
+        reversalOfId: { type: ["integer", "null"], description: The accrual a reversal row reverses }
+        refundId: { type: ["integer", "null"], description: The refund a reversal row belongs to }
+        payoutId: { type: ["integer", "null"], description: The payout this row is allocated to }
     MarketingMaterial:
       type: object
       required: [id, title, category, url, description, minRank, createdAt]
@@ -1619,9 +1722,11 @@ components:
          mgrActiveTeamLeaders, mgrActiveResellers, mgrOrgBottles, mgrPersonalBottles,
          dirActiveManagers, dirActiveResellers, dirOrgBottles, activeMinBottles,
          reactivationBottles, rankGraceMonths, largeOrderBottles, shippingFlatRate,
-         freeShippingThreshold, monthlyContributionTarget, bulkDiscountTiers]
+         freeShippingThreshold, monthlyContributionTarget, bulkDiscountTiers, eftReservationHours, shopifyReservationHours]
       properties:
         bulkDiscountTiers: { type: string }
+        eftReservationHours: { type: ["integer", "null"], description: "Hours an unpaid EFT order keeps its stock before it is cancelled; null = never" }
+        shopifyReservationHours: { type: ["integer", "null"], description: "Hours an unfinished Shopify checkout keeps its stock before it is cancelled; null = never" }
         openingOrder: { type: integer }
         reorderMinimum: { type: integer }
         teamLeaderRate: { type: number }
@@ -1676,6 +1781,8 @@ components:
         freeShippingThreshold: { type: number, minimum: 0 }
         monthlyContributionTarget: { type: number, minimum: 0 }
         bulkDiscountTiers: { type: string, pattern: '^$|^[0-9]+:[0-9]+([.][0-9]+)?(,[0-9]+:[0-9]+([.][0-9]+)?)*$' }
+        eftReservationHours: { type: ["integer", "null"], minimum: 1, maximum: 720 }
+        shopifyReservationHours: { type: ["integer", "null"], minimum: 1, maximum: 720 }
 
     AdminApplication:
       type: object
@@ -1883,6 +1990,11 @@ components:
       properties:
         type: { type: string, enum: [refund, cancel, return, chargeback] }
         reason: { type: string, minLength: 2 }
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 100
+          description: Same key = same refund. A retried or double-submitted request with a key already used for this order changes nothing.
         items:
           type: array
           description: Omit to refund/cancel the entire order
@@ -1894,23 +2006,42 @@ components:
               quantity: { type: integer, minimum: 1 }
     Payout:
       type: object
-      required: [id, payoutNumber, resellerName, resellerCode, amount, entryCount, reference, createdAt]
+      required: [id, payoutNumber, resellerName, resellerCode, period, status, amount, entryCount, reference, createdAt, approvedAt, processingAt, paidAt, failedAt, failureReason]
       properties:
         id: { type: integer }
         payoutNumber: { type: string }
         resellerName: { type: string }
         resellerCode: { type: string }
+        period: { type: ["string", "null"], description: Payout run period (YYYY-MM); null on payouts recorded before payout periods existed }
+        status: { type: string, enum: [pending, approved, processing, paid, failed] }
         amount: { type: number }
         entryCount: { type: integer }
         reference: { type: ["string", "null"] }
         createdAt: { type: string }
+        approvedAt: { type: ["string", "null"] }
+        processingAt: { type: ["string", "null"] }
+        paidAt: { type: ["string", "null"] }
+        failedAt: { type: ["string", "null"] }
+        failureReason: { type: ["string", "null"] }
     PayoutInput:
       type: object
+      required: [period]
       properties:
+        period:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}$"
+          description: Payout period; must have been closed by the month-end qualification run. Approved incentives of this and earlier periods are included.
         resellerIds:
           type: array
           items: { type: integer }
         reference: { type: ["string", "null"] }
+    PayoutUpdate:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [approved, processing, paid, failed] }
+        reference: { type: ["string", "null"], description: Bank / EFT batch reference }
+        failureReason: { type: ["string", "null"], description: Required when marking a payout failed }
     QualificationRunInput:
       type: object
       required: [period]
@@ -1952,6 +2083,118 @@ components:
         rows:
           type: array
           items: { $ref: "#/components/schemas/QualificationRow" }
+    PaymentEventOrder:
+      type: object
+      required: [id, orderNumber, status, paymentMethod, total, paidAt, shopifyOrderId]
+      properties:
+        id: { type: integer }
+        orderNumber: { type: string }
+        status: { type: string }
+        paymentMethod: { type: string }
+        total: { type: number }
+        paidAt: { type: ["string", "null"] }
+        shopifyOrderId: { type: ["string", "null"] }
+    PaymentResolution:
+      type: object
+      required: [action, reason, resolvedAt, resolvedBy, orderStatusAtResolution]
+      properties:
+        action: { type: string }
+        reason: { type: string }
+        resolvedAt: { type: string }
+        resolvedBy: { type: string }
+        orderStatusAtResolution: { type: ["string", "null"] }
+    PaymentEvent:
+      type: object
+      required:
+        [id, provider, topic, externalOrderId, externalReference, deliveryId, amount, currency, financialStatus,
+         outcome, reason, createdAt, order, expectedAmount, difference, review, resolution]
+      properties:
+        id: { type: integer }
+        provider: { type: string }
+        topic: { type: string }
+        externalOrderId: { type: ["string", "null"] }
+        externalReference: { type: ["string", "null"] }
+        deliveryId: { type: ["string", "null"] }
+        amount: { type: ["number", "null"] }
+        currency: { type: ["string", "null"] }
+        financialStatus: { type: ["string", "null"] }
+        outcome: { type: string, description: "applied | already_applied | rejected" }
+        reason: { type: ["string", "null"] }
+        createdAt: { type: string }
+        order:
+          oneOf:
+            - { $ref: "#/components/schemas/PaymentEventOrder" }
+            - { type: "null" }
+        expectedAmount: { type: ["number", "null"] }
+        difference: { type: ["number", "null"], description: "Received minus expected" }
+        review: { type: string, enum: [open, resolved, not_required] }
+        resolution:
+          oneOf:
+            - { $ref: "#/components/schemas/PaymentResolution" }
+            - { type: "null" }
+    PaymentEventDetail:
+      type: object
+      required: [event, related, history]
+      properties:
+        event: { $ref: "#/components/schemas/PaymentEvent" }
+        related:
+          type: array
+          items: { $ref: "#/components/schemas/PaymentEvent" }
+        history:
+          type: array
+          items: { $ref: "#/components/schemas/AuditLog" }
+    PaymentResolutionInput:
+      type: object
+      required: [action, reason]
+      properties:
+        action: { type: string, enum: [refunded_in_shopify, confirmed_order_paid, no_action_required, other] }
+        reason: { type: string, minLength: 5, maxLength: 1000 }
+    MonthRun:
+      type: object
+      required: [period, status, attempts, lastError, startedAt, finishedAt, leaseExpiresAt, resellerCount]
+      properties:
+        period: { type: string }
+        status: { type: string }
+        attempts: { type: integer }
+        lastError: { type: ["string", "null"] }
+        startedAt: { type: ["string", "null"] }
+        finishedAt: { type: ["string", "null"] }
+        leaseExpiresAt: { type: ["string", "null"] }
+        resellerCount: { type: integer }
+    JobRun:
+      type: object
+      required: [id, job, period, trigger, attempt, status, startedAt, finishedAt, error, result]
+      properties:
+        id: { type: integer }
+        job: { type: string }
+        period: { type: ["string", "null"] }
+        trigger: { type: string }
+        attempt: { type: integer }
+        status: { type: string }
+        startedAt: { type: string }
+        finishedAt: { type: ["string", "null"] }
+        error: { type: ["string", "null"] }
+        result: { type: ["string", "null"] }
+    JobOverview:
+      type: object
+      required: [months, runs]
+      properties:
+        months:
+          type: array
+          items: { $ref: "#/components/schemas/MonthRun" }
+        runs:
+          type: array
+          items: { $ref: "#/components/schemas/JobRun" }
+    ClientIpDiagnostic:
+      type: object
+      required: [clientIp, source, trustedProxyHops, socketAddress, forwardedFor, netlifyClientIp]
+      properties:
+        clientIp: { type: string }
+        source: { type: string }
+        trustedProxyHops: { type: integer }
+        socketAddress: { type: ["string", "null"] }
+        forwardedFor: { type: ["string", "null"] }
+        netlifyClientIp: { type: ["string", "null"] }
     FraudFlag:
       type: object
       required: [id, type, severity, detail, status, createdAt, resellerCode, orderNumber, userEmail, resellerId, userId]

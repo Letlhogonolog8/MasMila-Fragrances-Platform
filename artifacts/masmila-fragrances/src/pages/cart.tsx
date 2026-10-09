@@ -86,6 +86,9 @@ export function CartPage() {
   );
 }
 
+/** One key per checkout attempt: a retried or double-clicked submit returns the same order instead of placing another. */
+const newCheckoutKey = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`);
+
 export function CheckoutPage() {
   const cart = useCart();
   const config = useStoreConfig();
@@ -99,6 +102,9 @@ export function CheckoutPage() {
     line1: '', line2: '', suburb: '', city: '', province: '', postalCode: '',
     notes: '', referralCode: referral?.code ?? '', paymentMethod: 'eft' as 'eft' | 'shopify', saveAddress: true,
   });
+  const [checkoutKey, setCheckoutKey] = useState(newCheckoutKey);
+  const bagSignature = `${cart.mode}:${cart.lines.map((l) => `${l.productId}x${l.quantity}`).join(',')}`;
+  useEffect(() => { setCheckoutKey(newCheckoutKey()); }, [bagSignature]);
   useSeo({ title: 'Checkout', noindex: true });
   useEffect(() => { track('begin_checkout', { value: subtotal, items: cart.count }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -127,6 +133,7 @@ export function CheckoutPage() {
       attributionSource: form.referralCode && referral?.code === form.referralCode.trim().toUpperCase() ? referral.source : 'code',
       notes: form.notes || null,
       saveAddress: Boolean(me?.signedIn && form.saveAddress),
+      idempotencyKey: checkoutKey,
     };
     checkout.mutate({ data }, {
       onSuccess: (result) => {

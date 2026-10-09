@@ -14,14 +14,17 @@ const clerkPubKey = configuredClerkKey ? publishableKeyFromHost(window.location.
 const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
 
 /**
- * Clerk is used whenever a publishable key is configured. Without one (local
- * development / review), a demo sign-in lets you act as seeded accounts —
- * the API only honours demo tokens outside production.
+ * Clerk is used whenever a publishable key is configured. Without one, the
+ * demo sign-in (act as any seeded account) exists only in the Vite dev server
+ * — `import.meta.env.DEV` is false in every `vite build`, so production
+ * bundles never contain it and show "sign-in unavailable" instead. The API
+ * independently refuses demo tokens outside development/test.
  */
-export const authMode: 'clerk' | 'demo' = clerkPubKey ? 'clerk' : 'demo';
+export type AuthMode = 'clerk' | 'demo' | 'unavailable';
+export const authMode: AuthMode = clerkPubKey ? 'clerk' : import.meta.env.DEV ? 'demo' : 'unavailable';
 
 type AuthApi = {
-  mode: 'clerk' | 'demo';
+  mode: AuthMode;
   ready: boolean;
   signedIn: boolean;
   /** Clerk redirects to `redirectTo` (default home); demo mode leaves navigation to the caller. */
@@ -91,8 +94,21 @@ function ClerkBridge({ children }: { children: ReactNode }) {
   return <AuthContext.Provider value={api}>{children}</AuthContext.Provider>;
 }
 
+/** Production build without Clerk: nobody can sign in, and no stored demo identity is ever sent. */
+function UnavailableAuthProvider({ children }: { children: ReactNode }) {
+  setAuthTokenGetter(null);
+  const api = useMemo<AuthApi>(() => ({ mode: 'unavailable', ready: true, signedIn: false, signOut: async () => undefined, demoSignIn: () => undefined }), []);
+  return <AuthContext.Provider value={api}>{children}</AuthContext.Provider>;
+}
+
 export function AppAuthProvider({ children }: { children: ReactNode }) {
-  if (authMode === 'demo') return <DemoAuthProvider>{children}</DemoAuthProvider>;
+  // A demo identity left in storage (e.g. from an old demo build) is never reused outside demo mode.
+  if (authMode !== 'demo') {
+    try { window.localStorage.removeItem(DEMO_KEY); } catch { /* storage unavailable */ }
+  }
+  // The DEV check lets `vite build` drop the demo provider from production bundles entirely.
+  if (import.meta.env.DEV && authMode === 'demo') return <DemoAuthProvider>{children}</DemoAuthProvider>;
+  if (authMode === 'unavailable') return <UnavailableAuthProvider>{children}</UnavailableAuthProvider>;
   return (
     <ClerkProvider
       publishableKey={clerkPubKey!}

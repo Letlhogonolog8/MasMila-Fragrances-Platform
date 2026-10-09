@@ -21,6 +21,16 @@ import {
   getListAdminTeamsQueryKey,
   getListAuditLogsQueryKey,
   getListFraudFlagsQueryKey,
+  getGetJobOverviewQueryKey,
+  getGetPaymentEventQueryKey,
+  getListPaymentEventsQueryKey,
+  useGetJobOverview,
+  useGetPaymentEvent,
+  useListPaymentEvents,
+  useResolvePaymentEvent,
+  type ListPaymentEventsParams,
+  type PaymentEvent,
+  type PaymentResolutionInputAction,
   useApproveCommissions,
   useCreateAdminProduct,
   useCreateMarketingMaterial,
@@ -38,6 +48,7 @@ import {
   useListAdminMarketingMaterials,
   useListAdminOrders,
   useListAdminPayouts,
+  useUpdateAdminPayout,
   useListAdminProducts,
   useListAdminResellers,
   useListAdminTeams,
@@ -142,6 +153,8 @@ export function ApplicationsSection() {
 
 // ------------------------------------------------------------------ orders
 
+const newIdempotencyKey = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
 function OrderAdmin({ order }: { order: Order }) {
   const update = useUpdateAdminOrder({ mutation: { meta: { success: 'Order updated' } } });
   const refund = useRefundAdminOrder({ mutation: { meta: { success: 'Refund processed' } } });
@@ -150,12 +163,15 @@ function OrderAdmin({ order }: { order: Order }) {
   const [tracking, setTracking] = useState(order.trackingNumber ?? '');
   const [attribution, setAttribution] = useState(order.referralCode ?? '');
   const [refundForm, setRefundForm] = useState<{ type: RefundInput['type']; reason: string; qty: Record<number, number> }>({ type: 'refund', reason: '', qty: {} });
+  // One key per intended refund: a double-click or a retry after a lost response is applied once; editing the form starts a new refund.
+  const [refundKey, setRefundKey] = useState(newIdempotencyKey);
+  const editRefund = (next: typeof refundForm) => { setRefundForm(next); setRefundKey(newIdempotencyKey()); };
   const done = { onSuccess: () => invalidate(getListAdminOrdersQueryKey(), getListAdminCommissionsQueryKey(), getListAdminProductsQueryKey()) };
   const paid = ['paid', 'processing', 'shipped', 'delivered', 'partially_refunded'].includes(order.status);
   const submitRefund = (e: FormEvent) => {
     e.preventDefault();
     const items = Object.entries(refundForm.qty).filter(([, q]) => q > 0).map(([id, q]) => ({ orderItemId: Number(id), quantity: q }));
-    refund.mutate({ id: order.id, data: { type: refundForm.type, reason: refundForm.reason, ...(items.length ? { items } : {}) } }, done);
+    refund.mutate({ id: order.id, data: { type: refundForm.type, reason: refundForm.reason, idempotencyKey: refundKey, ...(items.length ? { items } : {}) } }, { onSuccess: () => { setRefundKey(newIdempotencyKey()); done.onSuccess(); } });
   };
   return (
     <div className="order-admin">
@@ -193,12 +209,12 @@ function OrderAdmin({ order }: { order: Order }) {
           <strong>{order.status === 'awaiting_payment' ? 'Cancel order' : 'Refund / cancel / return / chargeback'}</strong>
           {order.status !== 'awaiting_payment' ? (
             <div className="action-row">
-              <select className="select-plain" value={refundForm.type} onChange={(e) => setRefundForm({ ...refundForm, type: e.target.value as RefundInput['type'] })}><option value="refund">Refund</option><option value="cancel">Cancel</option><option value="return">Return (restock)</option><option value="chargeback">Chargeback</option></select>
-              {order.items.map((i) => <label key={i.id} className="mini-qty">{i.name} {i.size}<input type="number" min={0} max={i.quantity - i.refundedQuantity} value={refundForm.qty[i.id] ?? 0} onChange={(e) => setRefundForm({ ...refundForm, qty: { ...refundForm.qty, [i.id]: Number(e.target.value) } })} /></label>)}
+              <select className="select-plain" value={refundForm.type} onChange={(e) => editRefund({ ...refundForm, type: e.target.value as RefundInput['type'] })}><option value="refund">Refund</option><option value="cancel">Cancel</option><option value="return">Return (restock)</option><option value="chargeback">Chargeback</option></select>
+              {order.items.map((i) => <label key={i.id} className="mini-qty">{i.name} {i.size}<input type="number" min={0} max={i.quantity - i.refundedQuantity} value={refundForm.qty[i.id] ?? 0} onChange={(e) => editRefund({ ...refundForm, qty: { ...refundForm.qty, [i.id]: Number(e.target.value) } })} /></label>)}
             </div>
           ) : null}
           <div className="action-row">
-            <input className="input-plain" required minLength={2} placeholder="Reason (recorded in the audit trail)" value={refundForm.reason} onChange={(e) => setRefundForm({ ...refundForm, reason: e.target.value })} />
+            <input className="input-plain" required minLength={2} placeholder="Reason (recorded in the audit trail)" value={refundForm.reason} onChange={(e) => editRefund({ ...refundForm, reason: e.target.value })} />
             <button className="btn-ghost small danger" type="submit" disabled={refund.isPending} data-testid="button-refund">{order.status === 'awaiting_payment' ? 'Cancel order' : 'Process'}</button>
           </div>
           <small className="muted">Leave quantities at 0 to apply to the whole order. Associated incentives are reversed automatically.</small>
@@ -400,12 +416,15 @@ export function IncentivesSection() {
   const ledger = useListAdminCommissions(lParams, { query: { queryKey: getListAdminCommissionsQueryKey(lParams) } });
   const payouts = useListAdminPayouts({ query: { queryKey: getListAdminPayoutsQueryKey() } });
   const approve = useApproveCommissions({ mutation: { meta: { success: 'Incentives approved' } } });
-  const pay = useCreatePayouts({ mutation: { meta: { success: 'Payouts recorded' } } });
+  const pay = useCreatePayouts({ mutation: { meta: { success: 'Payouts calculated' } } });
+  const step = useUpdateAdminPayout({ mutation: { meta: { success: 'Payout updated' } } });
   const invalidate = useInvalidate();
   const [selected, setSelected] = useState<number[]>([]);
   const [reference, setReference] = useState('');
   const periods = Array.from({ length: 12 }, (_, i) => shiftPeriod(currentPeriod(), -i));
-  const approvable = (ledger.data ?? []).filter((r) => r.status === 'pending' && (r.qualificationStatus === 'qualified' || r.entryType === 'reversal'));
+  // Reversals are approved with their accrual, never on their own.
+  const isApprovable = (r: { status: string; entryType: string; qualificationStatus: string }) => r.status === 'pending' && r.entryType === 'accrual' && r.qualificationStatus === 'qualified';
+  const approvable = (ledger.data ?? []).filter(isApprovable);
   const refresh = () => invalidate(getListAdminCommissionsQueryKey(), getGetQualificationQueryKey(), getListAdminPayoutsQueryKey(), getListAdminResellersQueryKey());
   const q = qualification.data;
   return (
@@ -417,7 +436,7 @@ export function IncentivesSection() {
       <div className="dash-card">
         <div className="order-head"><div><span className="eyebrow">Month-end run · {periodLabel(period)}</span><h3>{q?.status === 'closed' ? `Run ${dateTime(q.runAt)}` : 'Preview — not yet run'}</h3></div>
           <button className="btn-primary small" disabled={run.isPending} onClick={() => run.mutate({ data: { period } }, { onSuccess: refresh })} data-testid="button-run-qualification">{run.isPending ? 'Running…' : q?.status === 'closed' ? 'Re-run qualification' : 'Run qualification'}</button></div>
-        <p className="muted small-text">Calculates personal, team and organisation volume, active status, rank promotions, coaching warnings and reversions, then confirms or voids that month's incentives. Safe to re-run.</p>
+        <p className="muted small-text">Calculates personal, team and organisation volume, active status, rank promotions, coaching warnings and reversions, then confirms or voids that month's incentives. Safe to re-run. Runs automatically every hour once a month has ended.</p>
         <MutationError error={run.error} />
         {q ? (
           <>
@@ -436,6 +455,8 @@ export function IncentivesSection() {
         ) : qualification.isLoading ? <LoadingBlock /> : null}
       </div>
 
+      <MonthEndRuns />
+
       <div className="toolbar mt">
         <h3>Commission ledger</h3>
         <select className="select-plain" value={status} onChange={(e) => { setStatus(e.target.value); setSelected([]); }} aria-label="Ledger status"><option value="">All</option>{['pending', 'approved', 'paid', 'reversed', 'void'].map((s) => <option key={s} value={s}>{humanise(s)}</option>)}</select>
@@ -447,7 +468,7 @@ export function IncentivesSection() {
         <div className="table-wrap"><table className="table compact" data-testid="table-ledger">
           <thead><tr><th /><th>Order</th><th>Seller → beneficiary</th><th>Type</th><th className="num">Qty</th><th className="num">Wholesale</th><th className="num">Rate</th><th className="num">Incentive</th><th>Qualification</th><th>Status</th></tr></thead>
           <tbody>{ledger.data.map((r) => {
-            const can = r.status === 'pending' && (r.qualificationStatus === 'qualified' || r.entryType === 'reversal');
+            const can = isApprovable(r);
             return (
               <tr key={r.id} className={r.status === 'void' || r.status === 'reversed' ? 'dim' : ''}>
                 <td>{can ? <input type="checkbox" checked={selected.includes(r.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, r.id] : selected.filter((x) => x !== r.id))} aria-label={`Select entry ${r.id}`} /> : null}</td>
@@ -463,14 +484,31 @@ export function IncentivesSection() {
 
       <div className="toolbar mt">
         <h3>Payouts</h3>
-        <input className="input-plain" placeholder="Payment reference (e.g. EFT batch)" value={reference} onChange={(e) => setReference(e.target.value)} />
-        <button className="btn-primary small" disabled={pay.isPending} onClick={() => pay.mutate({ data: { reference: reference || null } }, { onSuccess: refresh })} data-testid="button-create-payouts">Pay all approved</button>
+        <input className="input-plain" placeholder="Bank / EFT batch reference" value={reference} onChange={(e) => setReference(e.target.value)} />
+        <button className="btn-primary small" disabled={pay.isPending} onClick={() => pay.mutate({ data: { period, reference: reference || null } }, { onSuccess: refresh })} data-testid="button-create-payouts">Calculate payouts for {period}</button>
       </div>
-      {pay.data ? <p className="ok-text">{pay.data.length ? `${pay.data.length} payout(s) recorded.` : 'Nothing approved to pay.'}</p> : null}
+      <p className="muted small-text">Calculating allocates approved incentives (of {period} and earlier) to a pending payout per reseller. No money moves here: approve each payout, pay it from the bank, then record it as processing and paid — or failed, which releases its incentives for the next payout.</p>
+      {pay.data ? <p className="ok-text">{pay.data.length ? `${pay.data.length} payout(s) calculated.` : 'No new payouts: nothing payable, or payouts for this period already exist.'}</p> : null}
       <MutationError error={pay.error} />
+      <MutationError error={step.error} />
       {payouts.data?.length ? (
-        <div className="table-wrap"><table className="table compact"><thead><tr><th>Payout</th><th>Reseller</th><th className="num">Entries</th><th className="num">Amount</th><th>Reference</th><th>Date</th></tr></thead>
-          <tbody>{payouts.data.map((p) => <tr key={p.id}><td>{p.payoutNumber}</td><td>{p.resellerName}<small>{p.resellerCode}</small></td><td className="num">{p.entryCount}</td><td className="num">{money(p.amount)}</td><td>{p.reference ?? '—'}</td><td>{dateTime(p.createdAt)}</td></tr>)}</tbody></table></div>
+        <div className="table-wrap"><table className="table compact" data-testid="table-payouts"><thead><tr><th>Payout</th><th>Reseller</th><th>Period</th><th className="num">Entries</th><th className="num">Amount</th><th>Status</th><th>Reference</th><th>Created</th><th /></tr></thead>
+          <tbody>{payouts.data.map((p) => {
+            const go = (status: 'approved' | 'processing' | 'paid' | 'failed') => {
+              const failureReason = status === 'failed' ? window.prompt('Why did this payout fail? Its incentives return to the payable balance.') : null;
+              if (status === 'failed' && !failureReason) return;
+              step.mutate({ id: p.id, data: { status, reference: reference || null, failureReason } }, { onSuccess: refresh });
+            };
+            return (
+              <tr key={p.id} className={p.status === 'failed' ? 'dim' : ''}><td>{p.payoutNumber}</td><td>{p.resellerName}<small>{p.resellerCode}</small></td><td>{p.period ?? '—'}</td><td className="num">{p.entryCount}</td><td className="num">{money(p.amount)}</td><td><StatusPill status={p.status} />{p.failureReason ? <small>{p.failureReason}</small> : null}</td><td>{p.reference ?? '—'}</td><td>{dateTime(p.createdAt)}</td>
+                <td><div className="action-row">
+                  {p.status === 'pending' ? <button className="btn-ghost small" disabled={step.isPending} onClick={() => go('approved')}>Approve</button> : null}
+                  {p.status === 'approved' ? <button className="btn-ghost small" disabled={step.isPending} onClick={() => go('processing')}>Mark processing</button> : null}
+                  {p.status === 'processing' ? <button className="btn-ghost small" disabled={step.isPending} onClick={() => go('paid')}>Mark paid</button> : null}
+                  {['pending', 'approved', 'processing'].includes(p.status) ? <button className="btn-ghost small danger" disabled={step.isPending} onClick={() => go('failed')}>Failed</button> : null}
+                </div></td></tr>
+            );
+          })}</tbody></table></div>
       ) : <p className="muted">No payouts recorded yet.</p>}
     </section>
   );
@@ -558,6 +596,135 @@ export function FraudSection() {
           </div>
         </article>
       ))}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ month-end runs
+
+function MonthEndRuns() {
+  const jobs = useGetJobOverview({ query: { queryKey: getGetJobOverviewQueryKey(), refetchInterval: 30_000 } });
+  if (jobs.isLoading) return <LoadingBlock />;
+  if (jobs.error) return <ErrorState error={jobs.error} />;
+  const months = jobs.data?.months ?? [];
+  const runs = jobs.data?.runs ?? [];
+  const failing = months.filter((m) => m.status === 'failed');
+  return (
+    <details className="dash-card mt" open={failing.length > 0} data-testid="panel-job-runs">
+      <summary><strong>Scheduled runs</strong>{failing.length ? <> · <StatusPill status="failed" label={`${failing.length} month(s) failed`} /></> : null}</summary>
+      <p className="muted small-text">Month-end qualification and unpaid EFT expiry run hourly. A failed month is retried automatically (up to 5 attempts, with a growing delay); administrators are notified of every failure.</p>
+      {months.length ? (
+        <div className="table-wrap"><table className="table compact">
+          <thead><tr><th>Month</th><th>Status</th><th className="num">Attempts</th><th>Started</th><th>Closed</th><th>Last error</th></tr></thead>
+          <tbody>{months.map((m) => <tr key={m.period}><td>{periodLabel(m.period)}</td><td><StatusPill status={m.status} /></td><td className="num">{m.attempts}</td><td>{m.startedAt ? dateTime(m.startedAt) : '—'}</td><td>{m.finishedAt ? dateTime(m.finishedAt) : '—'}</td><td className="small-text">{m.lastError ?? ''}</td></tr>)}</tbody>
+        </table></div>
+      ) : <p className="muted">No month has been run yet.</p>}
+      {runs.length ? (
+        <div className="table-wrap mt"><table className="table compact">
+          <thead><tr><th>Job</th><th>Month</th><th>Trigger</th><th className="num">Attempt</th><th>Status</th><th>Started</th><th>Finished</th><th>Error</th></tr></thead>
+          <tbody>{runs.map((r) => <tr key={r.id}><td>{humanise(r.job)}</td><td>{r.period ? periodLabel(r.period) : '—'}</td><td>{humanise(r.trigger)}</td><td className="num">{r.attempt}</td><td><StatusPill status={r.status} /></td><td>{dateTime(r.startedAt)}</td><td>{r.finishedAt ? dateTime(r.finishedAt) : '—'}</td><td className="small-text">{r.error ?? ''}</td></tr>)}</tbody>
+        </table></div>
+      ) : null}
+    </details>
+  );
+}
+
+// ------------------------------------------------------------------ payment review
+
+const REJECTION_REASONS = ['underpayment', 'overpayment', 'partial_payment', 'not_paid', 'currency_mismatch', 'duplicate_payment', 'order_refunded', 'order_cancelled', 'payment_method_mismatch', 'reference_mismatch', 'unknown_order', 'test_payment', 'shopify_order_cancelled', 'invalid_payload'];
+const RESOLUTIONS: Array<{ id: PaymentResolutionInputAction; label: string; hint: string }> = [
+  { id: 'refunded_in_shopify', label: 'Refunded in Shopify', hint: 'You refunded the customer in Shopify. Nothing changes here.' },
+  { id: 'confirmed_order_paid', label: 'Confirmed — order marked paid', hint: 'You checked the money arrived and already marked the order paid from Orders. Only allowed once the order is paid.' },
+  { id: 'no_action_required', label: 'No action required', hint: 'E.g. a Shopify test order, or already handled elsewhere.' },
+  { id: 'other', label: 'Other', hint: 'Explain in the reason.' },
+];
+
+function amountText(value: number | null | undefined, currency?: string | null) {
+  if (value == null) return '—';
+  return currency && currency !== 'ZAR' ? `${currency} ${value.toFixed(2)}` : money(value);
+}
+
+export function PaymentsSection() {
+  const [review, setReview] = useState<NonNullable<ListPaymentEventsParams['review']>>('open');
+  const [reason, setReason] = useState('');
+  const [search, setSearch] = useState('');
+  const q = useDebounced(search);
+  const params: ListPaymentEventsParams = { review, ...(reason ? { reason } : {}), ...(q.trim() ? { q: q.trim() } : {}) };
+  const events = useListPaymentEvents(params, { query: { queryKey: getListPaymentEventsQueryKey(params) } });
+  const [openId, setOpenId] = useState<number | null>(null);
+  return (
+    <section>
+      <div className="toolbar">
+        <h2>Payment review</h2>
+        <select className="select-plain" value={review} onChange={(e) => setReview(e.target.value as typeof review)} aria-label="Review status" data-testid="select-payment-review">
+          <option value="open">Quarantined — awaiting review</option><option value="resolved">Quarantined — resolved</option><option value="rejected">All quarantined</option><option value="all">All payment notifications</option>
+        </select>
+        <select className="select-plain" value={reason} onChange={(e) => setReason(e.target.value)} aria-label="Reason"><option value="">Any reason</option>{REJECTION_REASONS.map((r) => <option key={r} value={r}>{humanise(r)}</option>)}</select>
+        <SearchBox value={search} onChange={setSearch} placeholder="Order number or Shopify order" />
+      </div>
+      <p className="muted small-text">Shopify payments that did not match their order are held here and never change the order. Refund in Shopify, or check the money arrived and mark the order paid from Orders — then record what you did. Nothing on this page moves money.</p>
+      {events.isLoading ? <LoadingBlock /> : events.error ? <ErrorState error={events.error} /> : !events.data?.length ? <EmptyState title={review === 'open' ? 'No payments awaiting review.' : 'No payment notifications match.'} /> : (
+        <div className="table-wrap"><table className="table compact" data-testid="table-payment-events">
+          <thead><tr><th>Received</th><th>Shopify order</th><th>Mas'Mila order</th><th className="num">Paid</th><th className="num">Expected</th><th>Outcome</th><th>Review</th><th /></tr></thead>
+          <tbody>{events.data.map((e) => (
+            <Fragment key={e.id}>
+              <tr data-testid={`payment-event-${e.id}`}>
+                <td>{dateTime(e.createdAt)}</td>
+                <td>{e.externalReference ?? '—'}<small>{e.externalOrderId}</small></td>
+                <td>{e.order ? <>{e.order.orderNumber}<small>{humanise(e.order.status)} · {e.order.paymentMethod.toUpperCase()}</small></> : <span className="muted">No matching order</span>}</td>
+                <td className="num">{amountText(e.amount, e.currency)}</td>
+                <td className="num">{amountText(e.expectedAmount)}{e.difference ? <small>{e.difference > 0 ? '+' : ''}{e.difference.toFixed(2)}</small> : null}</td>
+                <td><StatusPill status={e.outcome} label={e.reason ? humanise(e.reason) : humanise(e.outcome)} /></td>
+                <td>{e.review === 'not_required' ? <span className="muted">—</span> : <StatusPill status={e.review} label={e.review === 'open' ? 'Awaiting review' : humanise(e.resolution?.action ?? 'resolved')} />}</td>
+                <td><button className="btn-ghost small" onClick={() => setOpenId(openId === e.id ? null : e.id)} data-testid={`button-payment-event-${e.id}`}>{openId === e.id ? 'Close' : 'Investigate'}</button></td>
+              </tr>
+              {openId === e.id ? <tr><td colSpan={8}><PaymentEventPanel id={e.id} /></td></tr> : null}
+            </Fragment>
+          ))}</tbody>
+        </table></div>
+      )}
+    </section>
+  );
+}
+
+function PaymentEventPanel({ id }: { id: number }) {
+  const detail = useGetPaymentEvent(id, { query: { queryKey: getGetPaymentEventQueryKey(id) } });
+  const resolve = useResolvePaymentEvent({ mutation: { meta: { success: 'Resolution recorded' } } });
+  const invalidate = useInvalidate();
+  const [action, setAction] = useState<PaymentResolutionInputAction>('refunded_in_shopify');
+  const [reason, setReason] = useState('');
+  if (detail.isLoading) return <LoadingBlock />;
+  if (detail.error || !detail.data) return <ErrorState error={detail.error} />;
+  const { event, related, history } = detail.data;
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    resolve.mutate({ id, data: { action, reason } }, { onSuccess: () => { setReason(''); invalidate(getListPaymentEventsQueryKey(), getGetPaymentEventQueryKey(id)); } });
+  };
+  return (
+    <div className="payment-investigation" data-testid={`panel-payment-event-${id}`}>
+      <dl className="detail-list">
+        <div><dt>Shopify order</dt><dd>{event.externalReference ?? '—'} ({event.externalOrderId ?? 'no id'})</dd></div>
+        <div><dt>Shopify payment status</dt><dd>{event.financialStatus ?? '—'}</dd></div>
+        <div><dt>Amount / currency</dt><dd>{amountText(event.amount, event.currency)} {event.currency ?? ''}</dd></div>
+        <div><dt>Order total</dt><dd>{amountText(event.expectedAmount)}</dd></div>
+        <div><dt>Rejected because</dt><dd>{event.reason ? humanise(event.reason) : '—'}</dd></div>
+        <div><dt>Order now</dt><dd>{event.order ? `${event.order.orderNumber} · ${humanise(event.order.status)}${event.order.paidAt ? ` (paid ${dateTime(event.order.paidAt)})` : ''}${event.order.shopifyOrderId ? ` · linked to Shopify ${event.order.shopifyOrderId}` : ''}` : 'No matching order'}</dd></div>
+        <div><dt>Delivery id</dt><dd className="small-text">{event.deliveryId ?? '—'}</dd></div>
+      </dl>
+      {related.length ? <p className="small-text">Other payment notifications for this order: {related.map((r) => `${r.externalReference ?? r.externalOrderId} — ${humanise(r.reason ?? r.outcome)} (${dateTime(r.createdAt)})`).join('; ')}</p> : null}
+      {event.resolution ? (
+        <p className="ok-text" data-testid="status-payment-resolved">Resolved by {event.resolution.resolvedBy} on {dateTime(event.resolution.resolvedAt)} — {humanise(event.resolution.action)}: “{event.resolution.reason}” (order was {event.resolution.orderStatusAtResolution ? humanise(event.resolution.orderStatusAtResolution) : 'not found'}).</p>
+      ) : event.review === 'open' ? (
+        <form className="form-grid" onSubmit={submit} data-testid="form-resolve-payment">
+          <div className="field"><label htmlFor={`resolve-action-${id}`}>What did you do?</label>
+            <select id={`resolve-action-${id}`} value={action} onChange={(e) => setAction(e.target.value as PaymentResolutionInputAction)}>{RESOLUTIONS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select>
+            <small className="muted">{RESOLUTIONS.find((r) => r.id === action)?.hint}</small></div>
+          <div className="field full"><label htmlFor={`resolve-reason-${id}`}>Reason (required — recorded in the audit log)</label><textarea id={`resolve-reason-${id}`} rows={2} required minLength={5} maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} /></div>
+          <MutationError error={resolve.error} />
+          <div className="action-row"><button className="btn-primary small" type="submit" disabled={resolve.isPending || reason.trim().length < 5}>Record resolution</button></div>
+        </form>
+      ) : null}
+      {history.length ? <details><summary>Review history ({history.length})</summary><ul className="small-text">{history.map((h) => <li key={h.id}>{dateTime(h.createdAt)} · {humanise(h.action)} · {h.actorId}</li>)}</ul></details> : null}
     </div>
   );
 }
@@ -691,13 +858,14 @@ export function MarketingSection() {
 
 // ------------------------------------------------------------------ settings & content
 
-const SETTING_GROUPS: Array<{ title: string; note?: string; fields: Array<[keyof AdminSettings, string, 'int' | 'num' | 'bool' | 'text']> }> = [
+const SETTING_GROUPS: Array<{ title: string; note?: string; fields: Array<[keyof AdminSettings, string, 'int' | 'num' | 'bool' | 'text' | 'optint']> }> = [
   { title: 'Reseller ordering', note: 'Bulk pricing: "bottles:% off" pairs, e.g. 50:5,100:10 = 5% off reseller price from 50 bottles, 10% from 100. Leave empty for none.', fields: [['openingOrder', 'Minimum opening order (bottles)', 'int'], ['reorderMinimum', 'Re-order minimum (bottles)', 'int'], ['bulkDiscountTiers', 'Bulk pricing tiers', 'text']] },
   { title: 'Incentive percentages', note: 'Applied to qualifying wholesale product sales. Changes apply to new calculations.', fields: [['teamLeaderRate', 'Team Leader incentive (%)', 'num'], ['managerRate', 'Manager incentive (%)', 'num'], ['directorRate', 'Director incentive (%)', 'num'], ['directorEnabled', 'Director level enabled (Phase 3)', 'bool'], ['referralRate', 'Online referral sale commission (%) — optional', 'num'], ['countAttributedRetail', 'Count referral-link customer sales as reseller volume', 'bool']] },
   { title: 'Active reseller definition & inactivity', fields: [['activeMinBottles', 'Bottles per month to stay active', 'int'], ['reactivationBottles', 'Bottles in a month to reactivate', 'int'], ['rankGraceMonths', 'Warning (coaching) months before a leader reverts', 'int']] },
   { title: 'Team Leader requirements', fields: [['tlActiveDirects', 'Active direct resellers', 'int'], ['personalTarget', 'Personal bottles / month', 'int'], ['teamTarget', 'Qualifying team bottles / month', 'int']] },
   { title: 'Manager requirements', fields: [['mgrActiveTeamLeaders', 'Active Team Leaders', 'int'], ['mgrActiveResellers', 'Active resellers in organisation', 'int'], ['mgrOrgBottles', 'Organisation bottles / month', 'int'], ['mgrPersonalBottles', 'Personal bottles / month', 'int']] },
   { title: 'Director requirements (future phase)', fields: [['dirActiveManagers', 'Active Managers', 'int'], ['dirActiveResellers', 'Active resellers in organisation', 'int'], ['dirOrgBottles', 'Organisation bottles / month', 'int']] },
+  { title: 'Unpaid orders', note: 'Hours an unpaid order keeps its stock reserved before it is cancelled automatically and the stock released. Leave empty to never cancel. Both need a business decision — see docs/OPERATIONS.md.', fields: [['eftReservationHours', 'EFT orders (hours)', 'optint'], ['shopifyReservationHours', 'Unfinished Shopify checkouts (hours)', 'optint']] },
   { title: 'Store & targets', fields: [['shippingFlatRate', 'Delivery fee (R)', 'num'], ['freeShippingThreshold', 'Free delivery threshold (R)', 'num'], ['largeOrderBottles', 'Large order alert (bottles)', 'int'], ['monthlyContributionTarget', 'Monthly contribution target (R)', 'num']] },
 ];
 
@@ -736,6 +904,8 @@ export function SettingsSection() {
                   <label htmlFor={`setting-${key}`}>{label}</label>
                   {type === 'bool'
                     ? <input id={`setting-${key}`} type="checkbox" checked={Boolean(form[key])} onChange={(e) => setForm({ ...form, [key]: e.target.checked })} />
+                    : type === 'optint'
+                    ? <input id={`setting-${key}`} type="number" min={1} max={720} step="1" placeholder="Never" value={form[key] == null ? '' : Number(form[key])} onChange={(e) => setForm({ ...form, [key]: e.target.value === '' ? null : Number(e.target.value) })} data-testid={`input-setting-${key}`} />
                     : type === 'text'
                     ? <input id={`setting-${key}`} className="setting-text" placeholder="50:5,100:10" value={String(form[key] ?? '')} onChange={(e) => setForm({ ...form, [key]: e.target.value.replace(/\s/g, '') })} data-testid={`input-setting-${key}`} />
                     : <input id={`setting-${key}`} type="number" min={0} step={type === 'num' ? '0.01' : '1'} value={Number(form[key] ?? 0)} onChange={(e) => setForm({ ...form, [key]: Number(e.target.value) })} data-testid={`input-setting-${key}`} />}

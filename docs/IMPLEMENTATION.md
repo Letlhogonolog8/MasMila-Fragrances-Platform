@@ -2,7 +2,9 @@
 
 How each section of the *Mas'Mila Fragrances Website Proposal* maps onto this codebase. Anything that is a business, legal or commercial deliverable rather than software is listed under **Outside the codebase**.
 
-## Demo accounts (development only, when Clerk is not configured)
+## Demo accounts (local development only: `NODE_ENV=development`, Clerk not configured)
+
+These accounts and the passwordless demo sign-in cannot exist in production: production builds omit the demo sign-in, and a production API with `DEMO_AUTH` or `SEED_DEMO_DATA` set refuses to serve requests.
 
 The API seeds the acceptance scenario from §48: a Manager with three Team Leaders, each with five resellers selling 20 × 50ml bottles at R140.
 
@@ -50,7 +52,7 @@ The API seeds the acceptance scenario from §48: a Manager with three Team Leade
 | 39 | Required pages | All 23 routes in `App.tsx` (plus cart, checkout, order tracking) |
 | 40–41 | SEO & analytics | Per-page titles/descriptions/canonicals, Product/FAQ/ItemList/Organization JSON-LD, alt text, `/api/sitemap.xml`, robots.txt; GA4, Meta Pixel, TikTok Pixel behind a cookie banner with product view / add to cart / checkout / purchase / lead / referral events |
 | 44 | Proper data model | See `lib/db/src/schema/masmila.ts` |
-| 48 | Acceptance tests | Demo data above + `pnpm --filter @workspace/api-server test` (16 engine tests); every §48 flow verified end-to-end against the API and in the browser |
+| 48 | Acceptance tests | Demo data above + `pnpm --filter @workspace/api-server test` (engine and auth-configuration unit tests) and `test:integration` (production start-up safety, HTTP authorization matrix); every §48 flow verified end-to-end against the API and in the browser |
 
 ## Integration recommendations (§7, §46)
 
@@ -63,7 +65,7 @@ The API seeds the acceptance scenario from §48: a Manager with three Team Leade
 
 ## Configuration before launch
 
-1. Set the environment variables in `replit.md` (Clerk keys, `ADMIN_EMAILS`, `SITE_URL`, Resend, Shopify, analytics IDs). Set `SEED_DEMO_DATA=false` or leave it unset in production.
+1. Set the environment variables in `replit.md` (Clerk keys — required, see "Production authentication" — `ADMIN_EMAILS`, `SITE_URL`, Resend, Shopify, analytics IDs). Do not set `DEMO_AUTH` or `SEED_DEMO_DATA` in production: the API refuses to serve requests if either is present. Use a fresh production database — never one that held the demo network.
 2. Replace demo content in Admin → Settings & content: WhatsApp number, banking details, social links.
 3. Load the real catalogue in Admin → Products (or map each product to its `shopifyVariantId` for Shopify checkout).
 4. Register the Shopify webhooks `orders/paid`, `orders/cancelled` and `refunds/create` to `/api/webhooks/shopify`.

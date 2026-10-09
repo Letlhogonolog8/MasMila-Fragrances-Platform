@@ -5,6 +5,7 @@ import checkoutRouter from "./checkout";
 import accountRouter from "./account";
 import resellerRouter from "./reseller";
 import adminRouter from "./admin";
+import adminOperationsRouter from "./admin-operations";
 import seoRouter from "./seo";
 import filesRouter from "./files";
 
@@ -18,5 +19,6 @@ router.use(checkoutRouter);
 router.use(accountRouter);
 router.use(resellerRouter);
 router.use(adminRouter);
+router.use(adminOperationsRouter);
 
 export default router;

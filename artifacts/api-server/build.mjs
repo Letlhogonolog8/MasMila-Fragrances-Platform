@@ -26,15 +26,20 @@ async function buildAll() {
 
   await esbuild({
     entryPoints: netlify
-      ? { api: path.resolve(artifactDir, "src/netlify.ts") }
-      : [path.resolve(artifactDir, "src/index.ts")],
+      ? { api: path.resolve(artifactDir, "src/netlify.ts"), "scheduled-jobs": path.resolve(artifactDir, "src/netlify-jobs.ts") }
+      : { index: path.resolve(artifactDir, "src/index.ts"), jobs: path.resolve(artifactDir, "src/run-jobs.ts") },
     platform: "node",
     target: "node20",
     bundle: true,
     format: "esm",
     outdir: distDir,
     outExtension: { ".js": ".mjs" },
-    ...(netlify ? { define: { "process.env.NODE_ENV": '"production"' } } : {}),
+    // Netlify: always production mode, and the deploy context (production,
+    // deploy-preview, branch-deploy) is baked in so the function knows whether
+    // it is the live site or a preview (lib/environment-guard.ts).
+    ...(netlify
+      ? { define: { "process.env.NODE_ENV": '"production"', __NETLIFY_DEPLOY_CONTEXT__: JSON.stringify(process.env.CONTEXT ?? "") } }
+      : {}),
     logLevel: "info",
     // Some packages may not be bundleable, so we externalize them, we can add more here as needed.
     // Some of the packages below may not be imported or installed, but we're adding them in case they are in the future.

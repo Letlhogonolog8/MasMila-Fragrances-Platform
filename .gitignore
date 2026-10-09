@@ -54,3 +54,10 @@ Thumbs.db
 # Netlify build output
 netlify/functions/
 .netlify/
+
+# Staging test evidence (docs/STAGING.md): kept outside version control
+staging-evidence/
+
+# Local environment files hold credentials: never commit them
+.env
+.env.*

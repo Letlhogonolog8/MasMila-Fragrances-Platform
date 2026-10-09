@@ -273,6 +273,12 @@ export interface CheckoutInput {
      */
   notes?: string | null;
   saveAddress?: boolean;
+  /**
+     * Random key generated once per checkout attempt. A retried or double-submitted request with the same key returns the order the first one created (HTTP 200) instead of placing a second order.
+     * @minLength 16
+     * @maxLength 100
+     */
+  idempotencyKey?: string;
 }
 
 export interface OrderItem {
@@ -611,6 +617,21 @@ export interface LedgerEntry {
   createdAt: string;
   /** @nullable */
   paidAt: string | null;
+  /**
+     * The accrual a reversal row reverses
+     * @nullable
+     */
+  reversalOfId?: number | null;
+  /**
+     * The refund a reversal row belongs to
+     * @nullable
+     */
+  refundId?: number | null;
+  /**
+     * The payout this row is allocated to
+     * @nullable
+     */
+  payoutId?: number | null;
 }
 
 export interface MarketingMaterial {
@@ -804,6 +825,16 @@ export interface AdminSummary {
 
 export interface AdminSettings {
   bulkDiscountTiers: string;
+  /**
+     * Hours an unpaid EFT order keeps its stock before it is cancelled; null = never
+     * @nullable
+     */
+  eftReservationHours: number | null;
+  /**
+     * Hours an unfinished Shopify checkout keeps its stock before it is cancelled; null = never
+     * @nullable
+     */
+  shopifyReservationHours: number | null;
   openingOrder: number;
   reorderMinimum: number;
   teamLeaderRate: number;
@@ -903,6 +934,18 @@ export interface AdminSettingsInput {
   monthlyContributionTarget?: number;
   /** @pattern ^$|^[0-9]+:[0-9]+([.][0-9]+)?(,[0-9]+:[0-9]+([.][0-9]+)?)*$ */
   bulkDiscountTiers?: string;
+  /**
+     * @minimum 1
+     * @maximum 720
+     * @nullable
+     */
+  eftReservationHours?: number | null;
+  /**
+     * @minimum 1
+     * @maximum 720
+     * @nullable
+     */
+  shopifyReservationHours?: number | null;
 }
 
 export interface AdminApplication {
@@ -1236,26 +1279,88 @@ export interface RefundInput {
   type: RefundInputType;
   /** @minLength 2 */
   reason: string;
+  /**
+     * Same key = same refund. A retried or double-submitted request with a key already used for this order changes nothing.
+     * @minLength 8
+     * @maxLength 100
+     */
+  idempotencyKey?: string;
   /** Omit to refund/cancel the entire order */
   items?: RefundInputItemsItem[];
 }
+
+export type PayoutStatus = typeof PayoutStatus[keyof typeof PayoutStatus];
+
+
+export const PayoutStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  processing: 'processing',
+  paid: 'paid',
+  failed: 'failed',
+} as const;
 
 export interface Payout {
   id: number;
   payoutNumber: string;
   resellerName: string;
   resellerCode: string;
+  /**
+     * Payout run period (YYYY-MM); null on payouts recorded before payout periods existed
+     * @nullable
+     */
+  period: string | null;
+  status: PayoutStatus;
   amount: number;
   entryCount: number;
   /** @nullable */
   reference: string | null;
   createdAt: string;
+  /** @nullable */
+  approvedAt: string | null;
+  /** @nullable */
+  processingAt: string | null;
+  /** @nullable */
+  paidAt: string | null;
+  /** @nullable */
+  failedAt: string | null;
+  /** @nullable */
+  failureReason: string | null;
 }
 
 export interface PayoutInput {
+  /**
+     * Payout period; must have been closed by the month-end qualification run. Approved incentives of this and earlier periods are included.
+     * @pattern ^[0-9]{4}-[0-9]{2}$
+     */
+  period: string;
   resellerIds?: number[];
   /** @nullable */
   reference?: string | null;
+}
+
+export type PayoutUpdateStatus = typeof PayoutUpdateStatus[keyof typeof PayoutUpdateStatus];
+
+
+export const PayoutUpdateStatus = {
+  approved: 'approved',
+  processing: 'processing',
+  paid: 'paid',
+  failed: 'failed',
+} as const;
+
+export interface PayoutUpdate {
+  status: PayoutUpdateStatus;
+  /**
+     * Bank / EFT batch reference
+     * @nullable
+     */
+  reference?: string | null;
+  /**
+     * Required when marking a payout failed
+     * @nullable
+     */
+  failureReason?: string | null;
 }
 
 export interface QualificationRunInput {
@@ -1292,6 +1397,156 @@ export interface QualificationResult {
   ledgerQualified: number;
   ledgerVoided: number;
   rows: QualificationRow[];
+}
+
+export interface PaymentEventOrder {
+  id: number;
+  orderNumber: string;
+  status: string;
+  paymentMethod: string;
+  total: number;
+  /** @nullable */
+  paidAt: string | null;
+  /** @nullable */
+  shopifyOrderId: string | null;
+}
+
+export interface PaymentResolution {
+  action: string;
+  reason: string;
+  resolvedAt: string;
+  resolvedBy: string;
+  /** @nullable */
+  orderStatusAtResolution: string | null;
+}
+
+export type PaymentEventReview = typeof PaymentEventReview[keyof typeof PaymentEventReview];
+
+
+export const PaymentEventReview = {
+  open: 'open',
+  resolved: 'resolved',
+  not_required: 'not_required',
+} as const;
+
+export interface PaymentEvent {
+  id: number;
+  provider: string;
+  topic: string;
+  /** @nullable */
+  externalOrderId: string | null;
+  /** @nullable */
+  externalReference: string | null;
+  /** @nullable */
+  deliveryId: string | null;
+  /** @nullable */
+  amount: number | null;
+  /** @nullable */
+  currency: string | null;
+  /** @nullable */
+  financialStatus: string | null;
+  /** applied | already_applied | rejected */
+  outcome: string;
+  /** @nullable */
+  reason: string | null;
+  createdAt: string;
+  order: PaymentEventOrder | null;
+  /** @nullable */
+  expectedAmount: number | null;
+  /**
+     * Received minus expected
+     * @nullable
+     */
+  difference: number | null;
+  review: PaymentEventReview;
+  resolution: PaymentResolution | null;
+}
+
+export interface AuditLog {
+  id: number;
+  action: string;
+  /** @nullable */
+  actorId: string | null;
+  entityType: string;
+  /** @nullable */
+  entityId: string | null;
+  /** @nullable */
+  metadata: string | null;
+  createdAt: string;
+}
+
+export interface PaymentEventDetail {
+  event: PaymentEvent;
+  related: PaymentEvent[];
+  history: AuditLog[];
+}
+
+export type PaymentResolutionInputAction = typeof PaymentResolutionInputAction[keyof typeof PaymentResolutionInputAction];
+
+
+export const PaymentResolutionInputAction = {
+  refunded_in_shopify: 'refunded_in_shopify',
+  confirmed_order_paid: 'confirmed_order_paid',
+  no_action_required: 'no_action_required',
+  other: 'other',
+} as const;
+
+export interface PaymentResolutionInput {
+  action: PaymentResolutionInputAction;
+  /**
+     * @minLength 5
+     * @maxLength 1000
+     */
+  reason: string;
+}
+
+export interface MonthRun {
+  period: string;
+  status: string;
+  attempts: number;
+  /** @nullable */
+  lastError: string | null;
+  /** @nullable */
+  startedAt: string | null;
+  /** @nullable */
+  finishedAt: string | null;
+  /** @nullable */
+  leaseExpiresAt: string | null;
+  resellerCount: number;
+}
+
+export interface JobRun {
+  id: number;
+  job: string;
+  /** @nullable */
+  period: string | null;
+  trigger: string;
+  attempt: number;
+  status: string;
+  startedAt: string;
+  /** @nullable */
+  finishedAt: string | null;
+  /** @nullable */
+  error: string | null;
+  /** @nullable */
+  result: string | null;
+}
+
+export interface JobOverview {
+  months: MonthRun[];
+  runs: JobRun[];
+}
+
+export interface ClientIpDiagnostic {
+  clientIp: string;
+  source: string;
+  trustedProxyHops: number;
+  /** @nullable */
+  socketAddress: string | null;
+  /** @nullable */
+  forwardedFor: string | null;
+  /** @nullable */
+  netlifyClientIp: string | null;
 }
 
 export interface FraudFlag {
@@ -1334,19 +1589,6 @@ export interface Enquiry {
   brandingRequirements: string | null;
   message: string;
   status: string;
-  createdAt: string;
-}
-
-export interface AuditLog {
-  id: number;
-  action: string;
-  /** @nullable */
-  actorId: string | null;
-  entityType: string;
-  /** @nullable */
-  entityId: string | null;
-  /** @nullable */
-  metadata: string | null;
   createdAt: string;
 }
 
@@ -1440,6 +1682,25 @@ period?: string;
 export type GetQualificationParams = {
 period?: string;
 };
+
+export type ListPaymentEventsParams = {
+review?: ListPaymentEventsReview;
+reason?: string;
+/**
+ * @maxLength 100
+ */
+q?: string;
+};
+
+export type ListPaymentEventsReview = typeof ListPaymentEventsReview[keyof typeof ListPaymentEventsReview];
+
+
+export const ListPaymentEventsReview = {
+  open: 'open',
+  resolved: 'resolved',
+  rejected: 'rejected',
+  all: 'all',
+} as const;
 
 export type ListAuditLogsParams = {
 entityType?: string;

@@ -1,13 +1,22 @@
+import "./netlify-context";
 import serverless from "serverless-http";
-import app from "./app";
+import app, { configErrors } from "./app";
 import { logger } from "./lib/logger";
 import { prepareData } from "./lib/prepare";
+import { useClientIpSource } from "./lib/client-ip";
+
+// Behind Netlify the client's address is the one Netlify's proxy reports (lib/client-ip.ts).
+useClientIpSource("netlify");
 
 /**
  * Netlify Function entry: the same Express app, served on /api/* via the
- * redirect in netlify.toml. Base data is prepared once per cold start.
+ * redirect in netlify.toml. Base data is prepared once per cold start —
+ * unless the auth configuration is unsafe, in which case the app answers
+ * every request with 503 and nothing touches the database.
  */
-const ready = prepareData().catch((err) => logger.error({ err }, "Failed to prepare base data"));
+const ready = configErrors.length
+  ? Promise.resolve()
+  : prepareData().catch((err) => logger.error({ err }, "Failed to prepare base data"));
 
 type FnRequest = { url?: string; body?: unknown; _body?: boolean; headers: Record<string, string | string[] | undefined> };
 

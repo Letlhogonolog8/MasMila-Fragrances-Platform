@@ -5,11 +5,13 @@ import {
   ordersTable,
   periodRunsTable,
   qualificationPeriodsTable,
+  refundItemsTable,
+  refundsTable,
   resellersTable,
   usersTable,
   type Reseller,
 } from "@workspace/db";
-import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import {
   RANK_LABELS,
   decideRank,
@@ -26,6 +28,7 @@ import { currentPeriod, periodBounds, previousPeriod } from "./period";
 import { audit } from "./audit";
 import { notifyUser } from "./notify";
 import { round2 } from "./http";
+import { auditIn, lockLedger, type Executor, type Tx } from "./tx";
 
 /** Order statuses whose product sales count towards volume and incentives. */
 export const PAID_STATUSES = ["paid", "processing", "shipped", "delivered", "partially_refunded"];
@@ -100,9 +103,10 @@ export async function evaluatePeriod(period: string, settings?: Settings): Promi
 const eligibleStanding = (standing: string | undefined) => standing === "good" || standing === "review";
 
 type LedgerRowInput = typeof commissionLedgerTable.$inferInsert;
+type LedgerRow = typeof commissionLedgerTable.$inferSelect;
 
-async function paidOrderLines(where: ReturnType<typeof and>) {
-  return db
+async function paidOrderLines(where: ReturnType<typeof and>, ex: Executor = db) {
+  return ex
     .select({
       orderId: ordersTable.id,
       orderNumber: ordersTable.orderNumber,
@@ -124,7 +128,11 @@ async function paidOrderLines(where: ReturnType<typeof and>) {
 
 type Line = Awaited<ReturnType<typeof paidOrderLines>>[number];
 
-/** Expected ledger rows for order lines given a rank lookup. */
+/**
+ * Expected accrual rows for order lines given a rank lookup. Accruals are
+ * always on the line's full quantity: refunds are represented by their own
+ * reversal rows, never by shrinking the accrual.
+ */
 function expectedRows(
   lines: Line[],
   settings: Settings,
@@ -133,16 +141,15 @@ function expectedRows(
 ): LedgerRowInput[] {
   const rows: LedgerRowInput[] = [];
   for (const line of lines) {
-    const net = line.quantity - line.refundedQuantity;
-    if (net <= 0 || !line.period) continue;
-    const base = round2(net * line.unitWholesale);
+    if (!line.period) continue;
+    const base = round2(line.quantity * line.unitWholesale);
     const common = {
       orderId: line.orderId,
       orderItemId: line.itemId,
       orderNumber: line.orderNumber,
       period: line.period,
       productName: line.productName,
-      quantity: net,
+      quantity: line.quantity,
       qualificationStatus,
     };
     const seller =
@@ -167,7 +174,7 @@ function expectedRows(
     }
     // Optional commission for the reseller credited with an online retail sale.
     if (line.channel === "retail" && line.attributedResellerId != null && settings.referralRate > 0 && ctx.eligible(line.attributedResellerId)) {
-      const retailBase = round2(net * line.unitPrice);
+      const retailBase = round2(line.quantity * line.unitPrice);
       rows.push({
         ...common,
         sellerResellerId: line.attributedResellerId,
@@ -184,14 +191,97 @@ function expectedRows(
 }
 
 /**
- * Provisional incentives the moment an order is paid, using current ranks,
- * so dashboards update in real time. The month-end run confirms or voids them.
+ * One negative reversal row for `quantity` refunded units of an accrual's
+ * order line. The amount is the accrual's proportional share, capped at what
+ * is still unreversed; the refund that completes the line reverses exactly
+ * the remainder, so reversals can never exceed the original incentive and a
+ * fully refunded line nets to zero despite rounding. A reversal is payable
+ * whenever its accrual is: pending with a pending accrual, approved once the
+ * accrual is approved or paid (a clawback deducted from the next payout).
  */
-export async function accrueOrderIncentives(orderId: number) {
-  const settings = await getSettings();
-  const lines = await paidOrderLines(and(eq(ordersTable.id, orderId), inArray(ordersTable.status, PAID_STATUSES)));
+async function insertReversal(
+  tx: Executor,
+  accrual: LedgerRow,
+  r: { quantity: number; refundedBefore: number; lineQuantity: number; refundId: number | null; reason: string },
+) {
+  const [{ total }] = await tx
+    .select({ total: sql<string>`coalesce(sum(${commissionLedgerTable.amount}), 0)` })
+    .from(commissionLedgerTable)
+    .where(and(eq(commissionLedgerTable.reversalOfId, accrual.id), ne(commissionLedgerTable.status, "void")));
+  const remaining = round2(accrual.amount + Number(total));
+  if (remaining <= 0 || r.quantity <= 0) return null;
+  const completesLine = r.refundedBefore + r.quantity >= r.lineQuantity;
+  const amount = completesLine ? remaining : Math.min(remaining, round2((accrual.amount * r.quantity) / r.lineQuantity));
+  if (amount <= 0) return null; // a sub-cent share: the line's final refund reverses it with the remainder
+  const payable = accrual.status === "approved" || accrual.status === "paid";
+  const [row] = await tx
+    .insert(commissionLedgerTable)
+    .values({
+      entryType: "reversal",
+      orderId: accrual.orderId,
+      orderItemId: accrual.orderItemId,
+      orderNumber: accrual.orderNumber,
+      period: accrual.period,
+      productName: accrual.productName,
+      quantity: -r.quantity,
+      sellerResellerId: accrual.sellerResellerId,
+      beneficiaryResellerId: accrual.beneficiaryResellerId,
+      kind: accrual.kind,
+      beneficiaryRank: accrual.beneficiaryRank,
+      rate: accrual.rate,
+      baseValue: -round2((accrual.baseValue * r.quantity) / r.lineQuantity),
+      amount: -amount,
+      qualificationStatus: accrual.qualificationStatus,
+      status: payable ? "approved" : "pending",
+      approvedAt: payable ? new Date() : null,
+      reversalOfId: accrual.id,
+      refundId: r.refundId,
+      note: accrual.status === "paid" ? `Clawback: ${r.reason}` : r.reason,
+    })
+    // Unique (refund, accrual): the same refund can never reverse an accrual twice.
+    .onConflictDoNothing()
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * Reversals for refunds that were recorded before this accrual existed (for
+ * example an attribution changed after a partial refund), replayed in order
+ * so the accrual nets exactly as if it had existed all along.
+ */
+async function reverseEarlierRefunds(tx: Executor, accrual: LedgerRow, line: Pick<Line, "itemId" | "quantity" | "refundedQuantity">) {
+  if (line.refundedQuantity <= 0) return;
+  const items = await tx
+    .select({ refundId: refundItemsTable.refundId, quantity: refundItemsTable.quantity, type: refundsTable.type, reason: refundsTable.reason })
+    .from(refundItemsTable)
+    .innerJoin(refundsTable, eq(refundsTable.id, refundItemsTable.refundId))
+    .where(and(eq(refundItemsTable.orderItemId, line.itemId), eq(refundsTable.orderWasPaid, true)))
+    .orderBy(refundItemsTable.id);
+  let before = 0;
+  // Refunds made before refunds were recorded individually (no refund row).
+  const untracked = line.refundedQuantity - items.reduce((sum, i) => sum + i.quantity, 0);
+  if (untracked > 0) {
+    await insertReversal(tx, accrual, { quantity: untracked, refundedBefore: 0, lineQuantity: line.quantity, refundId: null, reason: "Refunded before this incentive was recorded" });
+    before = untracked;
+  }
+  for (const item of items) {
+    await insertReversal(tx, accrual, { quantity: item.quantity, refundedBefore: before, lineQuantity: line.quantity, refundId: item.refundId, reason: `${item.type}: ${item.reason}` });
+    before += item.quantity;
+  }
+}
+
+/**
+ * Provisional incentives the moment an order is paid, using current ranks,
+ * so dashboards update in real time. The month-end run confirms or voids
+ * them. Runs inside the caller's transaction (payment or attribution change)
+ * so a sale is never left paid without its incentives. Returns inserted rows
+ * for the caller to announce after commit (see notifyAccruals).
+ */
+export async function accrueOrderIncentives(orderId: number, tx: Executor) {
+  const settings = await getSettings(tx);
+  const lines = await paidOrderLines(and(eq(ordersTable.id, orderId), inArray(ordersTable.status, PAID_STATUSES)), tx);
   if (!lines.length) return [];
-  const resellers = new Map((await db.select().from(resellersTable)).map((r) => [r.id, r]));
+  const resellers = new Map((await tx.select().from(resellersTable)).map((r) => [r.id, r]));
   const rows = expectedRows(lines, settings, {
     parentOf: (id) => resellers.get(id)?.sponsorId ?? null,
     rankOf: (id) => resellers.get(id)?.rank ?? "reseller",
@@ -199,168 +289,159 @@ export async function accrueOrderIncentives(orderId: number) {
   }, "provisional");
   if (!rows.length) return [];
   // Unique index (order line, beneficiary, kind) makes this idempotent: no duplicate claims.
-  const inserted = await db.insert(commissionLedgerTable).values(rows).onConflictDoNothing().returning();
-  const byBeneficiary = new Map<number, number>();
-  for (const row of inserted) byBeneficiary.set(row.beneficiaryResellerId, (byBeneficiary.get(row.beneficiaryResellerId) ?? 0) + row.amount);
-  for (const [resellerId, amount] of byBeneficiary) {
-    const reseller = resellers.get(resellerId);
-    if (reseller) {
-      await notifyUser(
-        reseller.userId,
-        "incentive_calculated",
-        "Incentive calculated",
-        `R${amount.toFixed(2)} in provisional incentives from order ${lines[0]!.orderNumber}. It is confirmed at month-end qualification.`,
-        "/account/reseller?tab=incentives",
-      );
-    }
+  const inserted = await tx.insert(commissionLedgerTable).values(rows).onConflictDoNothing().returning();
+  for (const row of inserted) {
+    const line = lines.find((l) => l.itemId === row.orderItemId);
+    if (line) await reverseEarlierRefunds(tx, row, line);
   }
   return inserted;
 }
 
+/** In-app/email notice of newly accrued incentives (after the accruing transaction commits). */
+export async function notifyAccruals(inserted: LedgerRow[]) {
+  if (!inserted.length) return;
+  const byBeneficiary = new Map<number, number>();
+  for (const row of inserted) byBeneficiary.set(row.beneficiaryResellerId, (byBeneficiary.get(row.beneficiaryResellerId) ?? 0) + row.amount);
+  const resellers = await db.select().from(resellersTable).where(inArray(resellersTable.id, [...byBeneficiary.keys()]));
+  for (const reseller of resellers) {
+    await notifyUser(
+      reseller.userId,
+      "incentive_calculated",
+      "Incentive calculated",
+      `R${byBeneficiary.get(reseller.id)!.toFixed(2)} in provisional incentives from order ${inserted[0]!.orderNumber}. It is confirmed at month-end qualification.`,
+      "/account/reseller?tab=incentives",
+    );
+  }
+}
+
 /**
- * Reverse incentives when order lines are cancelled, refunded, returned or
- * charged back. Unpaid accruals for a fully refunded line are marked
- * reversed; anything else gets a negative reversal row (a clawback when the
- * original was already paid). Returns rows that had already been paid.
+ * Reverse the incentives on one order line for one refund. Called inside the
+ * refund's transaction. Returns the accruals that had already been paid out
+ * (their reversals are clawbacks) and the reversal rows written.
  */
-export async function reverseLineIncentives(orderItemId: number, quantity: number, lineFullyRefunded: boolean, reason: string) {
-  const rows = await db
+export async function reverseLineIncentives(
+  tx: Executor,
+  r: { orderItemId: number; lineQuantity: number; refundedBefore: number; quantity: number; refundId: number; reason: string },
+) {
+  const accruals = await tx
     .select()
     .from(commissionLedgerTable)
     .where(
       and(
-        eq(commissionLedgerTable.orderItemId, orderItemId),
+        eq(commissionLedgerTable.orderItemId, r.orderItemId),
         eq(commissionLedgerTable.entryType, "accrual"),
-        notInArray(commissionLedgerTable.status, ["void", "reversed"]),
+        inArray(commissionLedgerTable.status, ["pending", "approved", "paid"]),
       ),
     );
-  const paidAffected: typeof rows = [];
-  for (const row of rows) {
-    if (row.status === "paid") paidAffected.push(row);
-    if (lineFullyRefunded && (row.status === "pending" || row.status === "approved")) {
-      const reversedSoFar = await db
-        .select({ total: sql<string>`coalesce(sum(${commissionLedgerTable.amount}), 0)` })
-        .from(commissionLedgerTable)
-        .where(and(eq(commissionLedgerTable.reversalOfId, row.id), notInArray(commissionLedgerTable.status, ["void"])));
-      await db
-        .update(commissionLedgerTable)
-        .set({ status: "reversed", reversedAt: new Date(), note: reason, updatedAt: new Date() })
-        .where(eq(commissionLedgerTable.id, row.id));
-      // Earlier partial reversals are now covered by reversing the whole accrual.
-      if (Number(reversedSoFar[0]?.total ?? 0) !== 0) {
-        await db
-          .update(commissionLedgerTable)
-          .set({ status: "void", note: `${reason} (superseded by full reversal)`, updatedAt: new Date() })
-          .where(and(eq(commissionLedgerTable.reversalOfId, row.id), notInArray(commissionLedgerTable.status, ["paid"])));
-      }
-      continue;
-    }
-    const share = Math.min(quantity, row.quantity) / row.quantity;
-    await db.insert(commissionLedgerTable).values({
-      entryType: "reversal",
-      orderId: row.orderId,
-      orderItemId: row.orderItemId,
-      orderNumber: row.orderNumber,
-      period: row.period,
-      productName: row.productName,
-      quantity: -Math.min(quantity, row.quantity),
-      sellerResellerId: row.sellerResellerId,
-      beneficiaryResellerId: row.beneficiaryResellerId,
-      kind: row.kind,
-      beneficiaryRank: row.beneficiaryRank,
-      rate: row.rate,
-      baseValue: -round2(row.baseValue * share),
-      amount: -round2(row.amount * share),
-      qualificationStatus: row.qualificationStatus,
-      status: "pending",
-      reversalOfId: row.id,
-      note: row.status === "paid" ? `Clawback: ${reason}` : reason,
-    });
+  const paidAffected: LedgerRow[] = [];
+  const reversals: LedgerRow[] = [];
+  for (const accrual of accruals) {
+    const row = await insertReversal(tx, accrual, r);
+    if (!row) continue;
+    reversals.push(row);
+    if (accrual.status === "paid") paidAffected.push(accrual);
   }
-  return paidAffected;
+  return { paidAffected, reversals };
 }
 
 /**
  * Settle a period's ledger against the ranks actually qualified for in that
  * period: confirm rows that qualify, add rows that were missing, void
- * pending rows that do not qualify. Approved and paid rows are never touched.
+ * pending rows that do not qualify. Approved and paid rows are never touched,
+ * and no accrual amount is ever changed. Runs as one transaction.
  */
-async function settleLedger(snapshot: NetworkSnapshot) {
+async function settleLedger(snapshot: NetworkSnapshot, close: (tx: Tx) => Promise<void>) {
   const { period, settings, resellers, stats } = snapshot;
-  const lines = await paidOrderLines(and(eq(ordersTable.period, period), inArray(ordersTable.status, PAID_STATUSES)));
-  const expected = expectedRows(lines, settings, {
-    parentOf: (id) => resellers.get(id)?.sponsorId ?? null,
-    rankOf: (id) => stats.get(id)?.qualifiedRank ?? "reseller",
-    // Leadership incentives require an active beneficiary in good standing.
-    eligible: (id) => resellers.get(id)?.standing === "good" && Boolean(stats.get(id)?.isActive),
-  }, "qualified");
-  const key = (r: { orderItemId: number; beneficiaryResellerId: number; kind: string }) => `${r.orderItemId}:${r.beneficiaryResellerId}:${r.kind}`;
-  const existing = await db
-    .select()
-    .from(commissionLedgerTable)
-    .where(and(eq(commissionLedgerTable.period, period), eq(commissionLedgerTable.entryType, "accrual")));
-  // Prefer the live row when a voided row shares its key.
-  const existingByKey = new Map<string, (typeof existing)[number]>();
-  for (const row of existing) {
-    const current = existingByKey.get(key(row));
-    if (!current || current.status === "void") existingByKey.set(key(row), row);
-  }
-  const expectedKeys = new Set<string>();
-  let qualified = 0;
-  let voided = 0;
+  return db.transaction(async (tx) => {
+    await lockLedger(tx);
+    const lines = await paidOrderLines(and(eq(ordersTable.period, period), inArray(ordersTable.status, PAID_STATUSES)), tx);
+    const lineById = new Map(lines.map((l) => [l.itemId, l]));
+    const expected = expectedRows(lines, settings, {
+      parentOf: (id) => resellers.get(id)?.sponsorId ?? null,
+      rankOf: (id) => stats.get(id)?.qualifiedRank ?? "reseller",
+      // Leadership incentives require an active beneficiary in good standing.
+      eligible: (id) => resellers.get(id)?.standing === "good" && Boolean(stats.get(id)?.isActive),
+    }, "qualified");
+    const key = (r: { orderItemId: number; beneficiaryResellerId: number; kind: string }) => `${r.orderItemId}:${r.beneficiaryResellerId}:${r.kind}`;
+    const existing = await tx
+      .select()
+      .from(commissionLedgerTable)
+      .where(and(eq(commissionLedgerTable.period, period), eq(commissionLedgerTable.entryType, "accrual")));
+    // Prefer the live row when a voided row shares its key.
+    const existingByKey = new Map<string, LedgerRow>();
+    for (const row of existing) {
+      const current = existingByKey.get(key(row));
+      if (!current || current.status === "void") existingByKey.set(key(row), row);
+    }
+    const expectedKeys = new Set<string>();
+    let qualified = 0;
+    let voided = 0;
 
-  for (const row of expected) {
-    const k = key(row as { orderItemId: number; beneficiaryResellerId: number; kind: string });
-    expectedKeys.add(k);
-    const current = existingByKey.get(k);
-    if (!current) {
-      await db.insert(commissionLedgerTable).values(row).onConflictDoNothing();
-      qualified++;
-    } else if (current.status === "pending" || current.status === "void") {
-      await db
+    for (const row of expected) {
+      const k = key(row as { orderItemId: number; beneficiaryResellerId: number; kind: string });
+      expectedKeys.add(k);
+      const current = existingByKey.get(k);
+      if (!current) {
+        const [inserted] = await tx.insert(commissionLedgerTable).values(row).onConflictDoNothing().returning();
+        if (inserted) await reverseEarlierRefunds(tx, inserted, lineById.get(inserted.orderItemId)!);
+        qualified++;
+      } else if (current.status === "pending" || current.status === "void") {
+        await tx
+          .update(commissionLedgerTable)
+          .set({ status: "pending", qualificationStatus: "qualified", beneficiaryRank: row.beneficiaryRank, note: null, updatedAt: new Date() })
+          .where(eq(commissionLedgerTable.id, current.id));
+        if (current.status === "void") {
+          // A revived accrual brings back the reversals of its real refunds.
+          await tx
+            .update(commissionLedgerTable)
+            .set({ status: "pending", updatedAt: new Date() })
+            .where(and(eq(commissionLedgerTable.reversalOfId, current.id), eq(commissionLedgerTable.status, "void"), isNotNull(commissionLedgerTable.refundId)));
+        }
+        qualified++;
+      }
+    }
+    for (const row of existing) {
+      if (expectedKeys.has(key(row)) || row.status !== "pending") continue;
+      await tx
         .update(commissionLedgerTable)
         .set({
-          status: "pending",
-          qualificationStatus: "qualified",
-          beneficiaryRank: row.beneficiaryRank,
-          quantity: row.quantity,
-          baseValue: row.baseValue,
-          amount: incentiveAmount(row.baseValue!, current.rate),
-          note: null,
+          status: "void",
+          qualificationStatus: "not_qualified",
+          note: `Not qualified for ${RANK_LABELS[row.kind] ?? row.kind} incentive in ${period}`,
           updatedAt: new Date(),
         })
-        .where(eq(commissionLedgerTable.id, current.id));
-      qualified++;
+        .where(eq(commissionLedgerTable.id, row.id));
+      voided++;
     }
-  }
-  for (const row of existing) {
-    if (expectedKeys.has(key(row)) || row.status !== "pending") continue;
-    await db
-      .update(commissionLedgerTable)
-      .set({
-        status: "void",
-        qualificationStatus: "not_qualified",
-        note: `Not qualified for ${RANK_LABELS[row.kind] ?? row.kind} incentive in ${period}`,
-        updatedAt: new Date(),
-      })
-      .where(eq(commissionLedgerTable.id, row.id));
-    voided++;
-  }
-  // Pending partial reversals of voided accruals no longer apply.
-  await db.execute(sql`
-    update commission_ledger r set status = 'void', updated_at = now()
-    from commission_ledger a
-    where r.reversal_of_id = a.id and r.status = 'pending' and a.status in ('void', 'reversed') and r.period = ${period}
-  `);
-  return { qualified, voided };
+    // Pending reversals of voided accruals no longer apply.
+    await tx.execute(sql`
+      update commission_ledger r set status = 'void', updated_at = now()
+      from commission_ledger a
+      where r.reversal_of_id = a.id and r.status = 'pending' and a.status in ('void', 'reversed') and r.period = ${period}
+    `);
+    // Marks the month closed in the same transaction: settled and closed together, or neither.
+    await close(tx);
+    return { qualified, voided };
+  });
 }
+
+/**
+ * Hooks for a leased month-end run (lib/jobs.ts). `checkpoint` runs after
+ * each reseller is written and throws to abort (lease lost). `close` runs
+ * inside the settlement transaction and must throw unless this runner still
+ * owns the month, so a superseded runner can never settle it.
+ */
+export type QualificationRunControl = {
+  checkpoint?: (resellersDone: number) => Promise<void>;
+  close?: (tx: Tx, summary: { resellerCount: number }) => Promise<void>;
+};
 
 /**
  * Month-end run: snapshot every reseller's qualification, apply rank
  * promotions/warnings/reversions and inactivity, then settle the ledger.
  * Safe to re-run; the latest run wins for the snapshot.
  */
-export async function runQualification(period: string, actor: { id: number } | null) {
+export async function runQualification(period: string, actor: { id: number } | null, control: QualificationRunControl = {}) {
   const snapshot = await evaluatePeriod(period);
   const { settings, resellers, stats } = snapshot;
   let promotions = 0;
@@ -373,6 +454,7 @@ export async function runQualification(period: string, actor: { id: number } | n
   );
 
   const periodEnd = periodBounds(period).end;
+  let done = 0;
   for (const reseller of resellers.values()) {
     // Not yet a reseller during this period: nothing to judge (no inactivity or rank warnings).
     if (reseller.approvedAt >= periodEnd) continue;
@@ -391,11 +473,6 @@ export async function runQualification(period: string, actor: { id: number } | n
       : reseller;
     const decision = decideRank(base, s.qualifiedRank, settings.rankGraceMonths);
     const status = s.isActive ? "active" : "inactive";
-
-    await db
-      .update(resellersTable)
-      .set({ rank: decision.rankAfter, rankWarningMonths: decision.warningMonths, status })
-      .where(eq(resellersTable.id, reseller.id));
 
     const values = {
       resellerId: reseller.id,
@@ -418,21 +495,36 @@ export async function runQualification(period: string, actor: { id: number } | n
       warning: decision.warning,
       computedAt: new Date(),
     };
-    await db
-      .insert(qualificationPeriodsTable)
-      .values(values)
-      .onConflictDoUpdate({ target: [qualificationPeriodsTable.resellerId, qualificationPeriodsTable.period], set: values });
+    const unchanged = prior && prior.rankAfter === decision.rankAfter && prior.warning === decision.warning && prior.isActive === s.isActive;
+    const promoted = rankValue(decision.rankAfter) > rankValue(base.rank);
+    const reverted = rankValue(decision.rankAfter) < rankValue(base.rank);
+    // One transaction per reseller: the rank change, its snapshot and audit row are
+    // written together. A run interrupted between resellers is resumed by re-running:
+    // a reseller with a snapshot is re-decided from its snapshot's rankBefore, one
+    // without from its untouched current rank, so nothing is applied twice.
+    await db.transaction(async (tx) => {
+      await tx
+        .update(resellersTable)
+        .set({ rank: decision.rankAfter, rankWarningMonths: decision.warningMonths, status })
+        .where(eq(resellersTable.id, reseller.id));
+      await tx
+        .insert(qualificationPeriodsTable)
+        .values(values)
+        .onConflictDoUpdate({ target: [qualificationPeriodsTable.resellerId, qualificationPeriodsTable.period], set: values });
+      if (!unchanged && (promoted || reverted)) {
+        await auditIn(tx, promoted ? "rank_promoted" : "rank_reverted", "reseller", reseller.id, actor, { period, from: base.rank, to: decision.rankAfter });
+      }
+    });
+    await control.checkpoint?.(++done);
 
-    if (prior && prior.rankAfter === decision.rankAfter && prior.warning === decision.warning && prior.isActive === s.isActive) continue;
+    if (unchanged) continue;
     const label = RANK_LABELS[decision.rankAfter] ?? decision.rankAfter;
-    if (rankValue(decision.rankAfter) > rankValue(base.rank)) {
+    if (promoted) {
       promotions++;
       await notifyUser(reseller.userId, "rank_achieved", `Rank achieved: ${label}`, `Congratulations — you qualified as ${label} for ${period}.`, "/account/reseller");
-      await audit("rank_promoted", "reseller", reseller.id, actor, { period, from: base.rank, to: decision.rankAfter });
-    } else if (rankValue(decision.rankAfter) < rankValue(base.rank)) {
+    } else if (reverted) {
       demotions++;
       await notifyUser(reseller.userId, "rank_reverted", `Status update: ${label}`, `You did not maintain ${RANK_LABELS[base.rank]} requirements after your coaching month, so your status is now ${label}. You keep your reseller account and can re-qualify any month.`, "/account/reseller");
-      await audit("rank_reverted", "reseller", reseller.id, actor, { period, from: base.rank, to: decision.rankAfter });
     } else if (decision.warning) {
       warnings++;
       await notifyUser(reseller.userId, "qualification_warning", "Qualification warning", `You did not meet the ${RANK_LABELS[reseller.rank]} requirements in ${period}. This is your coaching month — meet them next month to keep your rank.`, "/account/reseller");
@@ -442,34 +534,13 @@ export async function runQualification(period: string, actor: { id: number } | n
     }
   }
 
-  const ledger = await settleLedger(snapshot);
-  await db
-    .insert(periodRunsTable)
-    .values({ period, status: "closed", runAt: new Date(), runBy: actor?.id ?? null, resellerCount: resellers.size })
-    .onConflictDoUpdate({ target: periodRunsTable.period, set: { status: "closed", runAt: new Date(), runBy: actor?.id ?? null, resellerCount: resellers.size } });
-  await audit(previousRun?.status === "closed" ? "qualification_rerun" : actor ? "qualification_run" : "qualification_auto_run", "period", period, actor, { promotions, demotions, warnings, ...ledger });
+  const ledger = await settleLedger(snapshot, async (tx) => {
+    if (control.close) return control.close(tx, { resellerCount: resellers.size });
+    const closed = { status: "closed", runAt: new Date(), runBy: actor?.id ?? null, resellerCount: resellers.size, finishedAt: new Date(), leaseOwner: null, leaseExpiresAt: null, lastError: null };
+    await tx.insert(periodRunsTable).values({ period, ...closed }).onConflictDoUpdate({ target: periodRunsTable.period, set: closed });
+  });
+  await audit(previousRun?.status === "closed" || previousRun?.finishedAt ? "qualification_rerun" : actor ? "qualification_run" : "qualification_auto_run", "period", period, actor, { promotions, demotions, warnings, ...ledger });
   return { promotions, demotions, warnings, ledgerQualified: ledger.qualified, ledgerVoided: ledger.voided };
-}
-
-/**
- * Automatic month-end close: once a calendar month has ended, run its
- * qualification (ranks, warnings, reversions, incentive settlement) without
- * waiting for an administrator. Claiming the period with a "running" row
- * first means concurrent server instances can't double-run it. Admins can
- * still re-run any month from the console.
- */
-export async function autoCloseQualification() {
-  const period = previousPeriod(currentPeriod());
-  const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(resellersTable);
-  if (!count) return false;
-  const claimed = await db
-    .insert(periodRunsTable)
-    .values({ period, status: "running", runAt: new Date() })
-    .onConflictDoNothing()
-    .returning({ period: periodRunsTable.period });
-  if (!claimed.length) return false;
-  await runQualification(period, null);
-  return true;
 }
 
 /** Bring a reseller's live status up to date after a sale (reactivation). */

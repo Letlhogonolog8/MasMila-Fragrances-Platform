@@ -3,8 +3,9 @@ import { clerkClient, getAuth } from "@clerk/express";
 import { db, resellersTable, usersTable, type Reseller, type User } from "@workspace/db";
 import { eq, getTableColumns, sql } from "drizzle-orm";
 import { adminEmails, notifyUser } from "./notify";
-import { forbidden, HttpError } from "./http";
+import { databaseUnavailable, forbidden, HttpError } from "./http";
 import { logger } from "./logger";
+import { clerkConfigured, demoAuthAllowed, verifiedPrimaryEmail } from "./runtime-env";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -16,25 +17,23 @@ declare global {
   }
 }
 
-export const clerkEnabled = Boolean(process.env.CLERK_SECRET_KEY);
+export const clerkEnabled = clerkConfigured();
 /**
- * Demo auth lets reviewers sign in as any seeded account without Clerk.
- * Off in production unless DEMO_AUTH=true is set explicitly — only for a
- * throwaway demo deployment with seeded data, since anyone can then sign in
- * as any account (including admin).
+ * Demo auth lets developers sign in as any email (including seeded admin
+ * accounts) without a password. It only exists when NODE_ENV is explicitly
+ * "development" or "test" and Clerk is not configured; production refuses to
+ * start if DEMO_AUTH is requested (see runtime-env.ts).
  */
-export const demoAuthEnabled =
-  !clerkEnabled &&
-  (process.env.DEMO_AUTH === "true" ||
-    (process.env.NODE_ENV !== "production" && process.env.DISABLE_DEMO_AUTH !== "true"));
+export const demoAuthEnabled = demoAuthAllowed();
 export const authMode: "clerk" | "demo" | "none" = clerkEnabled ? "clerk" : demoAuthEnabled ? "demo" : "none";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-async function upsertUserByEmail(
+/** Finds or creates the account for a verified email (exported for tests). */
+export async function upsertUserByEmail(
   email: string,
   details: { clerkUserId?: string; firstName?: string | null; surname?: string | null },
-): Promise<User> {
+): Promise<User | null> {
   const role = adminEmails().includes(email) ? "admin" : "customer";
   const [row] = await db
     .insert(usersTable)
@@ -50,7 +49,8 @@ async function upsertUserByEmail(
       target: usersTable.email,
       set: {
         lastSeenAt: new Date(),
-        ...(details.clerkUserId ? { clerkUserId: details.clerkUserId } : {}),
+        // Link an unclaimed account only; never move it to a different Clerk user.
+        ...(details.clerkUserId ? { clerkUserId: sql`coalesce(${usersTable.clerkUserId}, ${details.clerkUserId})` } : {}),
         // Promote configured admin emails; never silently demote anyone.
         ...(role === "admin" ? { role: "admin" } : {}),
         firstName: sql`case when ${usersTable.firstName} = '' then ${details.firstName ?? ""} else ${usersTable.firstName} end`,
@@ -60,6 +60,10 @@ async function upsertUserByEmail(
     // xmax = 0 only for a freshly inserted row, i.e. a brand-new account.
     .returning({ ...getTableColumns(usersTable), created: sql<boolean>`(xmax = 0)` });
   const { created, ...user } = row!;
+  if (details.clerkUserId && user.clerkUserId !== details.clerkUserId) {
+    logger.warn({ userId: user.id }, "Sign-in refused: this email's account is already linked to a different Clerk user");
+    return null;
+  }
   if (created) {
     await notifyUser(
       user.id,
@@ -79,8 +83,11 @@ async function resolveUser(req: Request): Promise<User | null> {
     const [existing] = await db.select().from(usersTable).where(eq(usersTable.clerkUserId, userId));
     if (existing) return existing;
     const clerkUser = await clerkClient.users.getUser(userId);
-    const email = clerkUser.primaryEmailAddress?.emailAddress?.toLowerCase();
-    if (!email) return null;
+    const email = verifiedPrimaryEmail(clerkUser);
+    if (!email) {
+      logger.warn({ clerkUserId: userId }, "Sign-in refused: Clerk primary email is missing or unverified");
+      return null;
+    }
     return upsertUserByEmail(email, {
       clerkUserId: userId,
       firstName: clerkUser.firstName,
@@ -108,6 +115,8 @@ export const loadSession: RequestHandler = async (req, _res, next) => {
       req.currentReseller = reseller ?? null;
     }
   } catch (err) {
+    // Database timeout or outage: answer 503 (retry), not "signed out" (401/403).
+    if (databaseUnavailable(err)) return next(err);
     logger.warn({ err }, "Could not resolve session");
     req.currentUser = null;
     req.currentReseller = null;

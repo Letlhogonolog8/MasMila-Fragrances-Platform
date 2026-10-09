@@ -1,17 +1,23 @@
 import { db, compensationSettingsTable, type CompensationSettings } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import type { Executor } from "./tx";
 
 export type Settings = CompensationSettings;
 
-/** The single settings row; created with schema defaults on first use. */
-export async function getSettings(): Promise<Settings> {
-  const [row] = await db
+/**
+ * The single settings row; created with schema defaults on first use. Inside
+ * a transaction, pass it: a query on the shared pool from within a
+ * transaction needs a second connection, and with the pool exhausted by
+ * transactions waiting on this one's locks, it would wait forever.
+ */
+export async function getSettings(executor: Executor = db): Promise<Settings> {
+  const [row] = await executor
     .select()
     .from(compensationSettingsTable)
     .where(eq(compensationSettingsTable.id, 1));
   if (row) return row;
-  await db.insert(compensationSettingsTable).values({ id: 1 }).onConflictDoNothing();
-  const [created] = await db
+  await executor.insert(compensationSettingsTable).values({ id: 1 }).onConflictDoNothing();
+  const [created] = await executor
     .select()
     .from(compensationSettingsTable)
     .where(eq(compensationSettingsTable.id, 1));

@@ -1,28 +1,22 @@
 import { ensureBaseData, seedDemoNetwork } from "./seed";
-import { autoCloseQualification } from "./network";
-import { logger } from "./logger";
+import { demoSeedAllowed, isProduction } from "./runtime-env";
+import { checkDatabaseEnvironment } from "./environment-guard";
 
 /**
- * Demo network: on by default outside production so the reseller, team and
- * incentive flows can be reviewed immediately; opt-in (SEED_DEMO_DATA=true)
- * in production.
+ * Demo network: on by default in development/test so the reseller, team and
+ * incentive flows can be reviewed immediately (SEED_DEMO_DATA=false turns it
+ * off). Never in production — see runtime-env.ts.
  */
-const seedDemo =
-  process.env.SEED_DEMO_DATA === "true" ||
-  (process.env.NODE_ENV !== "production" && process.env.SEED_DEMO_DATA !== "false");
+const seedDemo = demoSeedAllowed();
 
-/** Close last month's qualification automatically once the month has ended. */
-export async function runScheduledJobs() {
-  try {
-    if (await autoCloseQualification()) logger.info("Closed last month's qualification automatically");
-  } catch (err) {
-    logger.error({ err }, "Automatic month-end qualification failed");
-  }
-}
-
-/** Base data (settings, catalogue, content), the optional demo network and due scheduled jobs. */
+/**
+ * Base data (settings, catalogue, content) and the optional demo network.
+ * Scheduled work (month-end, reservation expiry) is not run here: it has its
+ * own triggers — see lib/jobs.ts and docs/OPERATIONS.md.
+ */
 export async function prepareData() {
+  // Nothing is written to a database that belongs to another environment.
+  if (isProduction() && (await checkDatabaseEnvironment()).length) return;
   await ensureBaseData();
   if (seedDemo) await seedDemoNetwork();
-  await runScheduledJobs();
 }

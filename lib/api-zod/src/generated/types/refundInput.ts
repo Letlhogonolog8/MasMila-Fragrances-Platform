@@ -12,6 +12,12 @@ export interface RefundInput {
   type: RefundInputType;
   /** @minLength 2 */
   reason: string;
+  /**
+     * Same key = same refund. A retried or double-submitted request with a key already used for this order changes nothing.
+     * @minLength 8
+     * @maxLength 100
+     */
+  idempotencyKey?: string;
   /** Omit to refund/cancel the entire order */
   items?: RefundInputItemsItem[];
 }

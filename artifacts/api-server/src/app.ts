@@ -1,4 +1,4 @@
-import express, { type Express, type RequestHandler } from "express";
+import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
@@ -13,9 +13,15 @@ import {
 } from "./middlewares/clerkProxyMiddleware";
 import { clerkEnabled, loadSession } from "./lib/auth";
 import { errorHandler } from "./lib/http";
+import { productionConfigErrors, productionConfigWarnings } from "./lib/runtime-env";
+import { trustedProxyHops } from "./lib/client-ip";
+import { environmentGate } from "./lib/environment-guard";
+import { sharedRateLimit } from "./lib/rate-limit";
 
 const app: Express = express();
-app.set("trust proxy", true);
+// Never `true`: that would let any visitor choose their own IP (and rate-limit
+// bucket) with an X-Forwarded-For header. See lib/client-ip.ts.
+app.set("trust proxy", trustedProxyHops());
 app.disable("x-powered-by");
 
 app.use(
@@ -44,6 +50,28 @@ app.use((_req, res, next) => {
   res.setHeader("X-Frame-Options", "DENY");
   next();
 });
+
+// Fail closed: with an unsafe production auth configuration (missing/malformed
+// Clerk keys, DEMO_AUTH or SEED_DEMO_DATA requested) no API request is served.
+export const configErrors = productionConfigErrors();
+if (configErrors.length) {
+  for (const error of configErrors) logger.fatal(`Unsafe production configuration: ${error}`);
+  app.use("/api", (_req, res) => {
+    res.status(503).json({ error: "The service is temporarily unavailable." });
+  });
+}
+for (const warning of productionConfigWarnings()) logger.warn(warning);
+// Maintenance switch (incidents, restores): MAINTENANCE_MODE=true answers every API
+// request — webhooks included, so Shopify retries them later — with 503, without
+// touching the database. Read per request, so it takes effect without a restart
+// on a long-running server. The health check still answers.
+app.use("/api", (req, res, next) => {
+  if (process.env.MAINTENANCE_MODE !== "true" || req.path === "/healthz") return next();
+  res.setHeader("Retry-After", "300");
+  res.status(503).json({ error: "Mas'Mila is briefly offline for maintenance. Please try again shortly." });
+});
+// Never serve from a database that belongs to another environment (lib/environment-guard.ts).
+app.use("/api", environmentGate);
 
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 
@@ -76,28 +104,10 @@ if (clerkEnabled) {
   logger.warn("CLERK_SECRET_KEY is not set — Clerk authentication is disabled");
 }
 
-/** Minimal fixed-window rate limiter for public write endpoints. */
-function rateLimit(limit: number, windowMs: number): RequestHandler {
-  const hits = new Map<string, { count: number; resetAt: number }>();
-  return (req, res, next) => {
-    const now = Date.now();
-    const key = `${req.ip}:${req.baseUrl}`;
-    const entry = hits.get(key);
-    if (!entry || entry.resetAt < now) {
-      hits.set(key, { count: 1, resetAt: now + windowMs });
-      if (hits.size > 10_000) for (const [k, v] of hits) if (v.resetAt < now) hits.delete(k);
-      return next();
-    }
-    if (++entry.count > limit) {
-      res.status(429).json({ error: "Too many requests. Please wait a moment and try again." });
-      return;
-    }
-    next();
-  };
-}
 app.use(
   ["/api/checkout", "/api/reseller-applications", "/api/enquiries", "/api/newsletter", "/api/orders/track"],
-  rateLimit(20, 10 * 60 * 1000),
+  // Shared across instances (lib/rate-limit.ts); runs after the environment gate.
+  sharedRateLimit(20, 10 * 60 * 1000),
 );
 
 app.use("/api", loadSession, router);

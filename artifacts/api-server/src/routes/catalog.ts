@@ -30,6 +30,7 @@ import { notFound } from "../lib/http";
 import { notifyAdmins } from "../lib/notify";
 import { audit } from "../lib/audit";
 import { isShopifyConfigured } from "../lib/shopifyStorefrontClient";
+import { clientIp } from "../lib/client-ip";
 
 const router: IRouter = Router();
 
@@ -209,7 +210,7 @@ router.get("/referrals", async (req, res) => {
   const valid = Boolean(match && match.standing !== "suspended");
   if (match && valid && match.userId !== req.currentUser?.id) {
     const visitor = createHash("sha256")
-      .update(`${req.ip ?? ""}|${req.headers["user-agent"] ?? ""}|${new Date().toISOString().slice(0, 10)}`)
+      .update(`${clientIp(req)}|${req.headers["user-agent"] ?? ""}|${new Date().toISOString().slice(0, 10)}`)
       .digest("hex")
       .slice(0, 24);
     await db.insert(referralVisitsTable).values({ resellerId: match.id, source: source === "qr" ? "qr" : source === "landing" ? "landing" : "link", visitorHash: visitor });

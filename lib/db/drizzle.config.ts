@@ -1,5 +1,15 @@
 import { defineConfig } from "drizzle-kit";
 
+// drizzle-kit (push) is for development databases only. Netlify builds and Replit
+// deployments can see a deployed DATABASE_URL, so refuse outright there: deployed
+// databases change only through the reviewed migrations in ./migrations
+// (docs/DATABASE_MIGRATIONS.md).
+if (process.env.NETLIFY === "true" || process.env.REPLIT_DEPLOYMENT) {
+  throw new Error(
+    "drizzle-kit is disabled in Netlify builds and Replit deployments. Apply lib/db/migrations with `pnpm --filter @workspace/db run migrate` (see docs/DATABASE_MIGRATIONS.md).",
+  );
+}
+
 // Netlify DB (Neon) exposes NETLIFY_DATABASE_URL; everywhere else uses DATABASE_URL.
 const url = process.env.DATABASE_URL ?? process.env.NETLIFY_DATABASE_URL;
 

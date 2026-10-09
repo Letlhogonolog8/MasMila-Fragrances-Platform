@@ -291,6 +291,9 @@ export async function serializeLedger(rows: LedgerEntry[]) {
     note: r.note,
     createdAt: r.createdAt.toISOString(),
     paidAt: iso(r.paidAt),
+    reversalOfId: r.reversalOfId,
+    refundId: r.refundId,
+    payoutId: r.payoutId,
   }));
 }
 

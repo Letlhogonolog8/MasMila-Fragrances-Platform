@@ -4,14 +4,17 @@ import {
   orderItemsTable,
   ordersTable,
   productsTable,
+  refundItemsTable,
+  refundsTable,
   resellersTable,
   usersTable,
+  type LedgerEntry,
   type Order,
   type OrderItem,
   type Reseller,
   type User,
 } from "@workspace/db";
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { available } from "./catalog";
 import { bulkDiscountFor, getSettings, shippingFor } from "./settings";
 import { periodOf } from "./period";
@@ -20,7 +23,8 @@ import { isUniqueViolation, orderNumber } from "./codes";
 import { audit } from "./audit";
 import { notifyAdmins, notifyEmail, notifyUser } from "./notify";
 import { checkOrder, raiseFlag } from "./fraud";
-import { accrueOrderIncentives, PAID_STATUSES, refreshLiveStatus, resellerNames, reverseLineIncentives } from "./network";
+import { accrueOrderIncentives, notifyAccruals, PAID_STATUSES, refreshLiveStatus, resellerNames, reverseLineIncentives } from "./network";
+import { auditIn, lockLedger, type Tx } from "./tx";
 import { createShopifyCheckout, isShopifyConfigured } from "./shopifyStorefrontClient";
 import { logger } from "./logger";
 
@@ -34,23 +38,73 @@ export type CheckoutInput = {
   attributionSource?: string | null;
   notes?: string | null;
   saveAddress?: boolean;
+  /** Client-generated key for this checkout attempt: a retry with the same key returns the same order. */
+  idempotencyKey?: string | null;
 };
+
+export type CheckoutResult = { orderId: number; checkoutUrl: string | null; paymentInstructions: string | null; replayed: boolean };
 
 const ATTRIBUTION_SOURCES = new Set(["link", "code", "qr", "landing", "manual"]);
 
-async function insertWithUniqueNumber(values: Omit<typeof ordersTable.$inferInsert, "orderNumber">, tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) {
-  for (let attempt = 0; attempt < 6; attempt++) {
-    try {
-      const [row] = await tx.insert(ordersTable).values({ ...values, orderNumber: orderNumber() }).returning();
-      return row!;
-    } catch (err) {
-      if (!isUniqueViolation(err) || attempt === 5) throw err;
-    }
-  }
-  throw new Error("unreachable");
+/**
+ * Inserts the order under the next number from order_number_seq. Sequence
+ * values are never handed out twice (even to transactions that roll back),
+ * so there is no collision to retry — and a retry inside the transaction
+ * could not work anyway: Postgres aborts the transaction on the first error.
+ */
+async function insertOrder(values: Omit<typeof ordersTable.$inferInsert, "orderNumber">, tx: Tx) {
+  const next = await tx.execute<{ value: string }>(sql`select nextval('order_number_seq') as value`);
+  const [row] = await tx.insert(ordersTable).values({ ...values, orderNumber: orderNumber(Number(next.rows[0]!.value)) }).returning();
+  return row!;
 }
 
-export async function createOrder(input: CheckoutInput, ctx: { user: User | null; reseller: Reseller | null }) {
+const eftInstructions = (order: Pick<Order, "paymentMethod" | "total" | "orderNumber">, reservationHours?: number | null) =>
+  order.paymentMethod === "eft"
+    ? `Pay R${order.total.toFixed(2)} by EFT using reference ${order.orderNumber}. Your order ships once payment reflects (usually 1–2 business days).` +
+      (reservationHours ? ` Unpaid orders are cancelled after ${reservationHours} hours and the stock released.` : "")
+    : null;
+
+/** How long a retried checkout waits for the first request to finish creating its Shopify checkout. */
+const SHOPIFY_CHECKOUT_GRACE_MS = 60_000;
+
+/**
+ * A checkout retried with an idempotency key that already placed an order
+ * gets that order back — never a second order, reservation or payment link.
+ */
+async function replayCheckout(checkoutKey: string, user: User | null): Promise<CheckoutResult | null> {
+  let [order] = await db.select().from(ordersTable).where(eq(ordersTable.checkoutKey, checkoutKey));
+  if (!order) return null;
+  if ((order.userId ?? null) !== (user?.id ?? null)) {
+    logger.warn({ event: "checkout.key_conflict", order: order.orderNumber }, "Checkout idempotency key reused by a different account");
+    throw new HttpError(409, "This checkout was already submitted. Please refresh the page and try again.");
+  }
+  if (order.paymentMethod === "shopify" && !order.checkoutUrl) {
+    // The first request is still creating the Shopify checkout — or died before saving it.
+    if (Date.now() - order.createdAt.getTime() < SHOPIFY_CHECKOUT_GRACE_MS) {
+      throw new HttpError(409, `Order ${order.orderNumber} is still being placed. Please wait a moment and try again.`);
+    }
+    const [fallback] = await db
+      .update(ordersTable)
+      .set({ paymentMethod: "eft", updatedAt: new Date() })
+      .where(and(eq(ordersTable.id, order.id), eq(ordersTable.paymentMethod, "shopify"), isNull(ordersTable.checkoutUrl)))
+      .returning();
+    [order] = fallback ? [fallback] : await db.select().from(ordersTable).where(eq(ordersTable.id, order.id));
+  }
+  logger.info({ event: "checkout.replayed", order: order!.orderNumber }, "Checkout retried with the same idempotency key; returned the existing order");
+  return {
+    orderId: order!.id,
+    checkoutUrl: order!.paymentMethod === "shopify" ? order!.checkoutUrl : null,
+    paymentInstructions: eftInstructions(order!, (await getSettings()).eftReservationHours),
+    replayed: true,
+  };
+}
+
+export async function createOrder(input: CheckoutInput, ctx: { user: User | null; reseller: Reseller | null }): Promise<CheckoutResult> {
+  const checkoutKey = input.idempotencyKey?.trim() || null;
+  if (checkoutKey) {
+    const replay = await replayCheckout(checkoutKey, ctx.user);
+    if (replay) return replay;
+  }
   const settings = await getSettings();
   const email = input.customer.email.trim().toLowerCase();
 
@@ -125,8 +179,11 @@ export async function createOrder(input: CheckoutInput, ctx: { user: User | null
   const wantsShopify =
     input.mode === "retail" && input.paymentMethod === "shopify" && isShopifyConfigured() && lines.every((l) => l.product.shopifyVariantId);
 
-  const order = await db.transaction(async (tx) => {
-    const created = await insertWithUniqueNumber(
+  // One transaction: the order, its lines and its stock reservations exist together or not at all.
+  let order: Order;
+  try {
+    order = await db.transaction(async (tx) => {
+    const created = await insertOrder(
       {
         channel: input.mode,
         userId: ctx.user?.id ?? null,
@@ -151,6 +208,7 @@ export async function createOrder(input: CheckoutInput, ctx: { user: User | null
         wholesaleValue: round2(lines.reduce((sum, l) => sum + l.unitWholesale * l.quantity, 0)),
         costValue: round2(lines.reduce((sum, l) => sum + l.product.cost * l.quantity, 0)),
         paymentMethod: wantsShopify ? "shopify" : "eft",
+        checkoutKey,
         notes: input.notes?.trim() || null,
       },
       tx,
@@ -178,7 +236,15 @@ export async function createOrder(input: CheckoutInput, ctx: { user: User | null
       if (!reserved.length) throw new HttpError(409, `${l.product.name} (${l.product.size}) just sold out. Please update your bag.`);
     }
     return created;
-  });
+    });
+  } catch (err) {
+    // A concurrent request with the same checkout key committed first: return that order.
+    if (checkoutKey && isUniqueViolation(err)) {
+      const replay = await replayCheckout(checkoutKey, ctx.user);
+      if (replay) return replay;
+    }
+    throw err;
+  }
 
   let checkoutUrl: string | null = null;
   if (wantsShopify) {
@@ -188,9 +254,19 @@ export async function createOrder(input: CheckoutInput, ctx: { user: User | null
         email,
         attributes: { masmila_order: order.orderNumber, ...(referralCode && attributedResellerId ? { referral_code: referralCode } : {}) },
       });
-      await db.update(ordersTable).set({ checkoutUrl }).where(eq(ordersTable.id, order.id));
+      // Guarded: a retry that gave up waiting may already have switched the order to EFT.
+      const [saved] = await db
+        .update(ordersTable)
+        .set({ checkoutUrl })
+        .where(and(eq(ordersTable.id, order.id), eq(ordersTable.paymentMethod, "shopify")))
+        .returning({ id: ordersTable.id });
+      if (!saved) {
+        checkoutUrl = null;
+        order.paymentMethod = "eft";
+      }
     } catch (err) {
-      logger.error({ err, order: order.orderNumber }, "Shopify checkout failed; falling back to EFT");
+      logger.error({ event: "checkout.shopify_failed", err, order: order.orderNumber }, "Shopify checkout failed; falling back to EFT");
+      checkoutUrl = null;
       await db.update(ordersTable).set({ paymentMethod: "eft" }).where(eq(ordersTable.id, order.id));
       order.paymentMethod = "eft";
     }
@@ -232,62 +308,89 @@ export async function createOrder(input: CheckoutInput, ctx: { user: User | null
     await notifyAdmins("reseller_order", "New reseller order", `${order.orderNumber}: ${bottles} bottles awaiting payment.`, "/admin?tab=orders");
   }
 
-  const paymentInstructions =
-    order.paymentMethod === "eft"
-      ? `Pay R${order.total.toFixed(2)} by EFT using reference ${order.orderNumber}. Your order ships once payment reflects (usually 1–2 business days).`
-      : null;
-  return { orderId: order.id, checkoutUrl, paymentInstructions };
+  return { orderId: order.id, checkoutUrl, paymentInstructions: eftInstructions(order, settings.eftReservationHours), replayed: false };
 }
 
-/** Idempotent: settles payment, stock, activation and incentives. */
-export async function markOrderPaid(orderId: number, actor: { id: number } | string | null, details: { paymentReference?: string; shopifyOrderId?: string } = {}) {
-  const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, orderId));
-  if (!order) throw notFound("Order not found");
-  if (order.status !== "awaiting_payment") return order;
+type PaymentActor = { id: number } | string | null;
+export type PaidSettlement = Awaited<ReturnType<typeof settleOrderPaid>>;
+
+/**
+ * Settles a payment on an unpaid order inside the caller's transaction (the
+ * caller holds the order row lock): status, stock, reseller activation,
+ * incentives and the audit row commit together or not at all. Nothing else
+ * may accrue incentives for an order — an unverified payment never gets here.
+ */
+export async function settleOrderPaid(
+  tx: Tx,
+  order: Order,
+  actor: PaymentActor,
+  details: { paymentReference?: string; shopifyOrderId?: string; paymentEventId?: number } = {},
+) {
   const paidAt = new Date();
   const period = periodOf(paidAt);
-  const items = await db.select().from(orderItemsTable).where(eq(orderItemsTable.orderId, orderId));
-
-  const updated = await db.transaction(async (tx) => {
-    const [row] = await tx
-      .update(ordersTable)
+  const items = await tx.select().from(orderItemsTable).where(eq(orderItemsTable.orderId, order.id));
+  const [row] = await tx
+    .update(ordersTable)
+    .set({
+      status: "paid",
+      paidAt,
+      period,
+      paymentReference: details.paymentReference ?? order.paymentReference ?? order.orderNumber,
+      shopifyOrderId: details.shopifyOrderId ?? order.shopifyOrderId,
+      updatedAt: paidAt,
+    })
+    .where(and(eq(ordersTable.id, order.id), eq(ordersTable.status, "awaiting_payment")))
+    .returning();
+  if (!row) throw new Error(`Order ${order.orderNumber} is not awaiting payment`);
+  for (const item of items) {
+    await tx
+      .update(productsTable)
       .set({
-        status: "paid",
-        paidAt,
-        period,
-        paymentReference: details.paymentReference ?? order.paymentReference ?? order.orderNumber,
-        shopifyOrderId: details.shopifyOrderId ?? order.shopifyOrderId,
+        stockQuantity: sql`greatest(${productsTable.stockQuantity} - ${item.quantity}, 0)`,
+        reservedQuantity: sql`greatest(${productsTable.reservedQuantity} - ${item.quantity}, 0)`,
         updatedAt: paidAt,
       })
-      .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "awaiting_payment")))
-      .returning();
-    if (!row) return null;
-    for (const item of items) {
-      await tx
-        .update(productsTable)
-        .set({
-          stockQuantity: sql`greatest(${productsTable.stockQuantity} - ${item.quantity}, 0)`,
-          reservedQuantity: sql`greatest(${productsTable.reservedQuantity} - ${item.quantity}, 0)`,
-          updatedAt: paidAt,
-        })
-        .where(eq(productsTable.id, item.productId));
-    }
-    if (row.channel === "reseller" && row.resellerId != null) {
-      await tx
-        .update(resellersTable)
-        .set({ lastOrderAt: paidAt, openingOrderCompleted: true })
-        .where(eq(resellersTable.id, row.resellerId));
-    }
-    return row;
-  });
-  if (!updated) {
-    const [current] = await db.select().from(ordersTable).where(eq(ordersTable.id, orderId));
-    return current!;
+      .where(eq(productsTable.id, item.productId));
   }
+  if (row.channel === "reseller" && row.resellerId != null) {
+    await tx
+      .update(resellersTable)
+      .set({ lastOrderAt: paidAt, openingOrderCompleted: true })
+      .where(eq(resellersTable.id, row.resellerId));
+  }
+  // Same transaction: an order is never paid without its incentives, and a
+  // refund (which locks the order row) always finds them.
+  const accrued = await accrueOrderIncentives(row.id, tx);
+  await auditIn(tx, "order_paid", "order", row.orderNumber, actor, {
+    total: row.total,
+    period,
+    paymentReference: row.paymentReference,
+    ...(details.paymentEventId != null ? { paymentEventId: details.paymentEventId } : {}),
+  });
+  return { row, accrued, items, period };
+}
 
-  await audit("order_paid", "order", updated.orderNumber, actor, { total: updated.total, period });
+/** Idempotent: settles payment, stock, activation and incentives. Used for EFT/admin confirmation and the demo seed. */
+export async function markOrderPaid(orderId: number, actor: PaymentActor, details: { paymentReference?: string; shopifyOrderId?: string } = {}) {
+  const result = await db.transaction(async (tx) => {
+    const [order] = await tx.select().from(ordersTable).where(eq(ordersTable.id, orderId)).for("update");
+    if (!order) throw notFound("Order not found");
+    if (order.status === "cancelled") {
+      // E.g. its EFT reservation expired: the stock may already be sold to someone else.
+      throw new HttpError(409, `Order ${order.orderNumber} was cancelled and its stock released, so the payment was not recorded. Refund the customer or place a new order for them.`);
+    }
+    if (order.status !== "awaiting_payment") return { order, settled: null };
+    const settled = await settleOrderPaid(tx, order, actor, details);
+    return { order: settled.row, settled };
+  });
+  if (result.settled) await afterOrderPaid(result.settled);
+  return result.order;
+}
+
+/** Notifications and status refreshes after a payment commits (outside the transaction: they may be slow or fail). */
+export async function afterOrderPaid({ row: updated, accrued, items, period }: PaidSettlement) {
   const seller = updated.channel === "reseller" ? updated.resellerId : updated.attributedResellerId;
-  await accrueOrderIncentives(updated.id);
+  await notifyAccruals(accrued);
   if (seller != null) await refreshLiveStatus(seller, period);
 
   // Customer + reseller notifications.
@@ -302,7 +405,6 @@ export async function markOrderPaid(orderId: number, actor: { id: number } | str
     if (r) await notifyUser(r.userId, "referral_sale", "New customer sale", `A customer bought ${updated.bottles} bottle${updated.bottles === 1 ? "" : "s"} through your referral link (${updated.orderNumber}).`, "/account/reseller?tab=sales");
   }
   await lowStockAlerts(items.map((i) => i.productId));
-  return updated;
 }
 
 async function lowStockAlerts(productIds: number[]) {
@@ -352,26 +454,38 @@ export async function updateFulfilment(
       attributedResellerId = r.id;
     }
     if (attributedResellerId !== order.attributedResellerId) {
-      const [paid] = await db
+      changes.attributedResellerId = attributedResellerId;
+      changes.referralCode = code;
+      changes.attributionSource = code ? "manual" : null;
+    }
+  }
+
+  const attributionChanged = changes.attributedResellerId !== undefined;
+  let accrued: Awaited<ReturnType<typeof accrueOrderIncentives>> = [];
+  // One transaction: old incentives voided, attribution saved and new incentives accrued together.
+  const updated = await db.transaction(async (tx) => {
+    if (attributionChanged) {
+      await lockLedger(tx);
+      await tx.select({ id: ordersTable.id }).from(ordersTable).where(eq(ordersTable.id, orderId)).for("update");
+      const [paid] = await tx
         .select({ count: sql<number>`count(*)::int` })
         .from(commissionLedgerTable)
         .where(and(eq(commissionLedgerTable.orderId, order.id), inArray(commissionLedgerTable.status, ["approved", "paid"])));
       if ((paid?.count ?? 0) > 0) throw badRequest("Incentives for this order are already approved or paid; refund and re-issue instead.");
-      await db
+      // Pending accruals and their pending reversals; the history stays in the ledger as void rows.
+      await tx
         .update(commissionLedgerTable)
         .set({ status: "void", note: "Attribution changed by administrator", updatedAt: new Date() })
         .where(and(eq(commissionLedgerTable.orderId, order.id), eq(commissionLedgerTable.status, "pending")));
-      changes.attributedResellerId = attributedResellerId;
-      changes.referralCode = code;
-      changes.attributionSource = code ? "manual" : null;
-      await audit("order_attribution_changed", "order", order.orderNumber, actor, { from: order.attributedResellerId, to: attributedResellerId });
+      await auditIn(tx, "order_attribution_changed", "order", order.orderNumber, actor, { from: order.attributedResellerId, to: changes.attributedResellerId });
     }
-  }
-
-  const [updated] = await db.update(ordersTable).set(changes).where(eq(ordersTable.id, orderId)).returning();
-  if (changes.attributedResellerId !== undefined && PAID_STATUSES.includes(updated!.status)) {
-    await accrueOrderIncentives(updated!.id);
-    if (updated!.attributedResellerId && updated!.period) await refreshLiveStatus(updated!.attributedResellerId, updated!.period);
+    const [row] = await tx.update(ordersTable).set(changes).where(eq(ordersTable.id, orderId)).returning();
+    if (attributionChanged && PAID_STATUSES.includes(row!.status)) accrued = await accrueOrderIncentives(row!.id, tx);
+    return row!;
+  });
+  if (attributionChanged && PAID_STATUSES.includes(updated.status)) {
+    await notifyAccruals(accrued);
+    if (updated.attributedResellerId && updated.period) await refreshLiveStatus(updated.attributedResellerId, updated.period);
   }
   if (patch.status && patch.status !== "paid") {
     await audit(`order_${patch.status}`, "order", order.orderNumber, actor, { courier: changes.courier, trackingNumber: changes.trackingNumber });
@@ -388,84 +502,185 @@ export async function updateFulfilment(
   return updated!;
 }
 
-/**
- * Cancel, refund, return or charge back all or part of an order. Stock is
- * restored for cancellations and returns; associated incentives are
- * reversed automatically.
- */
-export async function refundOrder(
-  orderId: number,
-  input: { type: "refund" | "cancel" | "return" | "chargeback"; reason: string; items?: Array<{ orderItemId: number; quantity: number }> },
-  actor: { id: number } | string,
-) {
-  const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, orderId));
-  if (!order) throw notFound("Order not found");
-  const items = await db.select().from(orderItemsTable).where(eq(orderItemsTable.orderId, orderId));
+export type RefundRequest = {
+  type: "refund" | "cancel" | "return" | "chargeback";
+  reason: string;
+  /** Omit to refund (or cancel) everything still unrefunded. */
+  items?: Array<{ orderItemId: number; quantity: number }>;
+  /** Where the event came from; with `externalId` it identifies the event for de-duplication. */
+  source?: "admin" | "shopify" | "system";
+  /** Stable id of the source event (Shopify refund id, admin idempotency key, `expiry:<order id>`). */
+  externalId?: string | null;
+  /**
+   * Reservation expiry: act only if, inside the order lock, the order is still
+   * unpaid, of this payment method and created before this time — otherwise
+   * refuse (409) and change nothing. A paid order is never touched.
+   */
+  onlyIfUnpaid?: { paymentMethod: string; createdBefore: Date };
+};
 
-  if (order.status === "awaiting_payment") {
-    await db.transaction(async (tx) => {
-      for (const item of items) {
+export type RefundOutcome = { refundId: number; replayed: boolean };
+
+/**
+ * Cancel, refund, return or charge back all or part of an order — exactly
+ * once per source event. Everything happens in one transaction with the
+ * order row locked: the refund record and its lines, refunded quantities,
+ * stock (restored for cancellations and returns; reservations released for
+ * unpaid cancellations), incentive reversals, order status and the audit
+ * row. A replayed event (same source + externalId) returns the original
+ * refund without changing anything; concurrent requests for the same order
+ * are serialised by the lock, so the second sees what the first did.
+ */
+export async function refundOrder(orderId: number, input: RefundRequest, actor: { id: number } | string): Promise<RefundOutcome> {
+  const source = input.source ?? "admin";
+  const externalId = input.externalId?.trim() || null;
+  const actorLabel = typeof actor === "string" ? actor : `user:${actor.id}`;
+
+  const result = await db.transaction(async (tx) => {
+    const [order] = await tx.select().from(ordersTable).where(eq(ordersTable.id, orderId)).for("update");
+    if (!order) throw notFound("Order not found");
+    if (externalId) {
+      const [existing] = await tx
+        .select()
+        .from(refundsTable)
+        .where(and(eq(refundsTable.source, source), eq(refundsTable.externalId, externalId)));
+      if (existing) {
+        if (existing.orderId !== orderId) throw new HttpError(409, "That refund reference was already used for a different order.");
+        return { replayed: true as const, refundId: existing.id, order };
+      }
+    }
+    const guard = input.onlyIfUnpaid;
+    if (guard && (order.status !== "awaiting_payment" || order.paymentMethod !== guard.paymentMethod || order.createdAt >= guard.createdBefore)) {
+      throw new HttpError(409, `Order ${order.orderNumber} is no longer an unpaid ${guard.paymentMethod.toUpperCase()} reservation (${order.status}).`);
+    }
+    await lockLedger(tx);
+
+    const unpaid = order.status === "awaiting_payment";
+    if (!unpaid && !PAID_STATUSES.includes(order.status)) throw badRequest(`Order is already ${order.status.replaceAll("_", " ")}.`);
+    const items = await tx.select().from(orderItemsTable).where(eq(orderItemsTable.orderId, orderId)).orderBy(orderItemsTable.id);
+    const byId = new Map(items.map((i) => [i.id, i]));
+
+    // Quantities to apply, never more than is still unrefunded. An unpaid order is always cancelled whole.
+    const requested = new Map<number, number>();
+    if (!unpaid && input.items?.length) {
+      for (const r of input.items) {
+        const item = byId.get(r.orderItemId);
+        if (!item) throw badRequest(`Item ${r.orderItemId} is not part of this order.`);
+        requested.set(item.id, Math.min((requested.get(item.id) ?? 0) + r.quantity, item.quantity - item.refundedQuantity));
+      }
+    } else {
+      for (const item of items) requested.set(item.id, item.quantity - item.refundedQuantity);
+    }
+    const lines = [...requested].filter(([, q]) => q > 0).map(([itemId, quantity]) => ({ item: byId.get(itemId)!, quantity }));
+    if (!lines.length) throw badRequest("Nothing left to refund on this order.");
+
+    const type = unpaid ? "cancel" : input.type;
+    const restock = !unpaid && (type === "cancel" || type === "return");
+    const reason = `${type}: ${input.reason}`;
+    const [refund] = await tx
+      .insert(refundsTable)
+      .values({
+        orderId,
+        type,
+        source,
+        externalId,
+        reason: input.reason,
+        amount: unpaid ? 0 : round2(lines.reduce((sum, l) => sum + l.quantity * l.item.unitPrice, 0)),
+        orderWasPaid: !unpaid,
+        initiatedBy: typeof actor === "string" ? null : actor.id,
+        actor: actorLabel,
+      })
+      .returning();
+
+    const paidAffected: LedgerEntry[] = [];
+    const reversals: LedgerEntry[] = [];
+    for (const { item, quantity } of lines) {
+      await tx.insert(refundItemsTable).values({
+        refundId: refund!.id,
+        orderItemId: item.id,
+        quantity,
+        amount: unpaid ? 0 : round2(quantity * item.unitPrice),
+        restockedQuantity: unpaid || restock ? quantity : 0,
+      });
+      if (unpaid) {
         await tx
           .update(productsTable)
-          .set({ reservedQuantity: sql`greatest(${productsTable.reservedQuantity} - ${item.quantity}, 0)` })
+          .set({ reservedQuantity: sql`greatest(${productsTable.reservedQuantity} - ${quantity}, 0)` })
+          .where(eq(productsTable.id, item.productId));
+        continue;
+      }
+      // Guarded increment (also enforced by a CHECK constraint): refunded never exceeds sold.
+      const [line] = await tx
+        .update(orderItemsTable)
+        .set({ refundedQuantity: sql`${orderItemsTable.refundedQuantity} + ${quantity}` })
+        .where(and(eq(orderItemsTable.id, item.id), sql`${orderItemsTable.refundedQuantity} + ${quantity} <= ${orderItemsTable.quantity}`))
+        .returning();
+      if (!line) throw new HttpError(409, "The order changed while this refund was being processed. Please try again.");
+      if (restock) {
+        await tx
+          .update(productsTable)
+          .set({ stockQuantity: sql`${productsTable.stockQuantity} + ${quantity}`, updatedAt: new Date() })
           .where(eq(productsTable.id, item.productId));
       }
-      await tx.update(ordersTable).set({ status: "cancelled", cancelledAt: new Date(), updatedAt: new Date() }).where(eq(ordersTable.id, orderId));
+      const reversed = await reverseLineIncentives(tx, {
+        orderItemId: item.id,
+        lineQuantity: item.quantity,
+        refundedBefore: item.refundedQuantity,
+        quantity,
+        refundId: refund!.id,
+        reason,
+      });
+      paidAffected.push(...reversed.paidAffected);
+      reversals.push(...reversed.reversals);
+      item.refundedQuantity += quantity;
+    }
+
+    const status = unpaid
+      ? "cancelled"
+      : items.every((i) => i.refundedQuantity >= i.quantity)
+        ? type === "cancel" ? "cancelled" : "refunded"
+        : "partially_refunded";
+    const now = new Date();
+    await tx
+      .update(ordersTable)
+      .set({ status, updatedAt: now, ...(status === "cancelled" ? { cancelledAt: now } : {}) })
+      .where(eq(ordersTable.id, orderId));
+    await auditIn(tx, unpaid ? "order_cancelled" : `order_${type}`, "order", order.orderNumber, actor, {
+      refundId: refund!.id,
+      source,
+      externalId,
+      reason: input.reason,
+      unpaid,
+      items: Object.fromEntries(lines.map((l) => [l.item.id, l.quantity])),
+      amount: refund!.amount,
+      reversals: reversals.map((r) => ({ id: r.id, accrual: r.reversalOfId, amount: r.amount })),
+      status,
     });
-    await audit("order_cancelled", "order", order.orderNumber, actor, { reason: input.reason, unpaid: true });
-    return order.id;
-  }
-  if (!PAID_STATUSES.includes(order.status)) throw badRequest(`Order is already ${order.status.replaceAll("_", " ")}.`);
+    return { replayed: false as const, refundId: refund!.id, order, unpaid, type, paidAffected };
+  }).catch((err: unknown) => {
+    // The same source event id raced in for a different order.
+    if (isUniqueViolation(err)) throw new HttpError(409, "That refund reference was already used.");
+    throw err;
+  });
 
-  const requested = new Map<number, number>();
-  const byId = new Map(items.map((i) => [i.id, i]));
-  if (input.items?.length) {
-    for (const r of input.items) {
-      const item = byId.get(r.orderItemId);
-      if (!item) throw badRequest(`Item ${r.orderItemId} is not part of this order.`);
-      requested.set(item.id, Math.min(r.quantity, item.quantity - item.refundedQuantity));
-    }
-  } else {
-    for (const item of items) requested.set(item.id, item.quantity - item.refundedQuantity);
-  }
-  const restock = input.type === "cancel" || input.type === "return";
-  const reason = `${input.type}: ${input.reason}`;
-  const paidRowsAffected: Array<{ id: number }> = [];
+  if (result.replayed) return { refundId: result.refundId, replayed: true };
+  const { order, unpaid, type, paidAffected } = result;
+  if (unpaid) return { refundId: result.refundId, replayed: false };
 
-  for (const [itemId, quantity] of requested) {
-    if (quantity <= 0) continue;
-    const item = byId.get(itemId)!;
-    const refundedQuantity = item.refundedQuantity + quantity;
-    await db.update(orderItemsTable).set({ refundedQuantity }).where(eq(orderItemsTable.id, itemId));
-    if (restock) {
-      await db.update(productsTable).set({ stockQuantity: sql`${productsTable.stockQuantity} + ${quantity}` }).where(eq(productsTable.id, item.productId));
-    }
-    paidRowsAffected.push(...(await reverseLineIncentives(itemId, quantity, refundedQuantity >= item.quantity, reason)));
-    item.refundedQuantity = refundedQuantity;
-  }
-
-  const fully = items.every((i) => i.refundedQuantity >= i.quantity);
-  const status = fully ? (input.type === "cancel" ? "cancelled" : "refunded") : "partially_refunded";
-  await db
-    .update(ordersTable)
-    .set({ status, updatedAt: new Date(), ...(status === "cancelled" ? { cancelledAt: new Date() } : {}) })
-    .where(eq(ordersTable.id, orderId));
-  await audit(`order_${input.type}`, "order", order.orderNumber, actor, { reason: input.reason, items: Object.fromEntries(requested), status });
-
-  if (paidRowsAffected.length) {
+  if (paidAffected.length) {
     await raiseFlag({
       type: "refund_commission",
       severity: "high",
-      detail: `${input.type} on ${order.orderNumber} affects ${paidRowsAffected.length} incentive payment(s) already paid out; clawback entries were created.`,
+      detail: `${type} on ${order.orderNumber} affects ${paidAffected.length} incentive payment(s) already paid out; clawback entries were created.`,
       orderId: order.id,
     });
   }
   const seller = order.channel === "reseller" ? order.resellerId : order.attributedResellerId;
   if (seller != null && order.period) await refreshLiveStatus(seller, order.period);
-  const text = `Your ${input.type === "chargeback" ? "chargeback" : input.type} for order ${order.orderNumber} has been processed.`;
+  const text = `Your ${type === "chargeback" ? "chargeback" : type} for order ${order.orderNumber} has been processed.`;
   if (order.userId) await notifyUser(order.userId, "order_refunded", "Order update", text, `/account?order=${order.orderNumber}`);
   else await notifyEmail(order.customerEmail, "Order update", text);
-  return order.id;
+  return { refundId: result.refundId, replayed: false };
 }
 
 /** Shape orders for the API. Admin views include cost, margin and incentive data. */

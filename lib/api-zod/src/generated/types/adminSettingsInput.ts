@@ -78,4 +78,16 @@ export interface AdminSettingsInput {
   monthlyContributionTarget?: number;
   /** @pattern ^$|^[0-9]+:[0-9]+([.][0-9]+)?(,[0-9]+:[0-9]+([.][0-9]+)?)*$ */
   bulkDiscountTiers?: string;
+  /**
+     * @minimum 1
+     * @maximum 720
+     * @nullable
+     */
+  eftReservationHours?: number | null;
+  /**
+     * @minimum 1
+     * @maximum 720
+     * @nullable
+     */
+  shopifyReservationHours?: number | null;
 }

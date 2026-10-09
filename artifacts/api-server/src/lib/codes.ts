@@ -18,9 +18,13 @@ export function referralCodeFor(firstName: string) {
   return `${letters}${randomInt(100, 1000)}`;
 }
 
-/** e.g. MM-260929-4821 */
-export function orderNumber(now = new Date()) {
-  return `MM-${sastDateLabel(now).slice(2).replaceAll("-", "")}-${randomCode(4, "0123456789")}`;
+/**
+ * e.g. MM-260929-00042 — the suffix is the next value of order_number_seq, so
+ * numbers are unique without retries. (Older orders have 4 random digits; the
+ * 5+ digit suffix can never equal one of those.)
+ */
+export function orderNumber(sequence: number, now = new Date()) {
+  return `MM-${sastDateLabel(now).slice(2).replaceAll("-", "")}-${String(sequence).padStart(5, "0")}`;
 }
 
 export const applicationNumber = () => `APP-${randomCode(8)}`;

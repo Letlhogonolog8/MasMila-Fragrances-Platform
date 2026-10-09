@@ -186,7 +186,7 @@ function SwitchAccountButton() {
       type="button"
       data-testid="button-switch-account"
       onClick={() => {
-        if (auth.mode === 'demo') navigate(target);
+        if (auth.mode !== 'clerk') navigate(target);
         else void auth.signOut(target);
       }}
     >

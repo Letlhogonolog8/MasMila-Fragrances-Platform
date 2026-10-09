@@ -10,6 +10,8 @@ type FlagInput = {
   resellerId?: number | null;
   orderId?: number | null;
   userId?: number | null;
+  /** The quarantined payment this flag is about (closed when that payment is resolved). */
+  paymentEventId?: number | null;
 };
 
 export async function raiseFlag(flag: FlagInput) {
@@ -20,6 +22,7 @@ export async function raiseFlag(flag: FlagInput) {
     resellerId: flag.resellerId ?? null,
     orderId: flag.orderId ?? null,
     userId: flag.userId ?? null,
+    paymentEventId: flag.paymentEventId ?? null,
   });
   await notifyAdmins("suspicious_activity", `Review needed: ${flag.type.replaceAll("_", " ")}`, flag.detail, "/admin?tab=fraud");
 }

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useSearch } from 'wouter';
 import {
   AlertTriangle, ArrowRight, BadgeDollarSign, Bell, Boxes, ClipboardList, FileBarChart, Gauge, Megaphone, Network,
-  Search, Settings, ShieldAlert, ShoppingCart, UserCheck, Users, UsersRound, History, Inbox, Package, TrendingUp, Wallet,
+  Receipt, Search, Settings, ShieldAlert, ShoppingCart, UserCheck, Users, UsersRound, History, Inbox, Package, TrendingUp, Wallet,
 } from 'lucide-react';
 import { getGetAdminSummaryQueryKey, useGetAdminSummary, type ProductPerformance, type TopSeller } from '@workspace/api-client-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from '@/components/ui/command';
@@ -13,11 +13,11 @@ import { useSeo } from '@/lib/seo';
 import { useMe } from '@/lib/auth';
 import { NotificationsList } from './account';
 import {
-  ApplicationsSection, AuditSection, CustomersSection, EnquiriesSection, FraudSection, IncentivesSection, MarketingSection,
+  ApplicationsSection, AuditSection, CustomersSection, EnquiriesSection, FraudSection, IncentivesSection, MarketingSection, PaymentsSection,
   OrdersSection, ProductsSection, ReportsSection, ResellersSection, SettingsSection, TeamsSection,
 } from './admin-sections';
 
-type Tab = 'overview' | 'applications' | 'orders' | 'products' | 'resellers' | 'teams' | 'incentives' | 'customers' | 'enquiries' | 'fraud' | 'marketing' | 'settings' | 'reports' | 'audit' | 'notifications';
+type Tab = 'overview' | 'applications' | 'orders' | 'products' | 'resellers' | 'teams' | 'incentives' | 'customers' | 'enquiries' | 'payments' | 'fraud' | 'marketing' | 'settings' | 'reports' | 'audit' | 'notifications';
 
 function PerfList({ title, rows, empty }: { title: string; rows: ProductPerformance[]; empty: string }) {
   const max = Math.max(...rows.map((r) => r.units), 1);
@@ -105,6 +105,7 @@ const NAV: Array<ShellItem<Tab>> = [
   { id: 'teams', label: 'Teams', icon: Network },
   { id: 'customers', label: 'Customers', icon: UsersRound },
   { id: 'enquiries', label: 'Enquiries', icon: Inbox },
+  { id: 'payments', label: 'Payment review', icon: Receipt },
   { id: 'fraud', label: 'Fraud & abuse', icon: ShieldAlert },
   { id: 'marketing', label: 'Marketing', icon: Megaphone },
   { id: 'reports', label: 'Reports', icon: FileBarChart },
@@ -173,6 +174,7 @@ export default function AdminPage() {
           : tab === 'incentives' ? <IncentivesSection />
           : tab === 'customers' ? <CustomersSection />
           : tab === 'enquiries' ? <EnquiriesSection />
+          : tab === 'payments' ? <PaymentsSection />
           : tab === 'fraud' ? <FraudSection />
           : tab === 'marketing' ? <MarketingSection />
           : tab === 'settings' ? <SettingsSection />

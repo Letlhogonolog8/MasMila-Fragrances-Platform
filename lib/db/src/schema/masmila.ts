@@ -2,9 +2,11 @@ import { createInsertSchema } from "drizzle-zod";
 import {
   type AnyPgColumn,
   boolean,
+  check,
   index,
   integer,
   numeric,
+  pgSequence,
   pgTable,
   primaryKey,
   serial,
@@ -180,6 +182,12 @@ export const productsTable = pgTable(
 );
 export type Product = typeof productsTable.$inferSelect;
 
+/**
+ * Source of order numbers (MM-YYMMDD-00042): unique by construction, so
+ * concurrent checkouts can never collide and nothing has to be retried.
+ */
+export const orderNumberSequence = pgSequence("order_number_seq", { startWith: 1 });
+
 export const ordersTable = pgTable(
   "orders",
   {
@@ -231,6 +239,8 @@ export const ordersTable = pgTable(
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
     shopifyOrderId: text("shopify_order_id").unique(),
     checkoutUrl: text("checkout_url"),
+    /** Client-generated idempotency key: a retried checkout returns this order instead of creating another. */
+    checkoutKey: text("checkout_key"),
     notes: text("notes"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -240,6 +250,7 @@ export const ordersTable = pgTable(
     index("orders_email_idx").on(t.customerEmail),
     index("orders_reseller_idx").on(t.resellerId),
     index("orders_attributed_idx").on(t.attributedResellerId),
+    uniqueIndex("orders_checkout_key_uq").on(t.checkoutKey).where(sql`checkout_key is not null`),
   ],
 );
 export type Order = typeof ordersTable.$inferSelect;
@@ -265,7 +276,10 @@ export const orderItemsTable = pgTable(
     unitWholesale: money("unit_wholesale").notNull(),
     unitCost: money("unit_cost").notNull(),
   },
-  (t) => [index("order_items_order_idx").on(t.orderId)],
+  (t) => [
+    index("order_items_order_idx").on(t.orderId),
+    check("order_items_refunded_quantity_range", sql`${t.refundedQuantity} >= 0 and ${t.refundedQuantity} <= ${t.quantity}`),
+  ],
 );
 export type OrderItem = typeof orderItemsTable.$inferSelect;
 
@@ -305,35 +319,168 @@ export const qualificationPeriodsTable = pgTable(
 );
 export type QualificationPeriod = typeof qualificationPeriodsTable.$inferSelect;
 
+/**
+ * One row per month's qualification run, which doubles as its lease: a runner
+ * owns the month while `status = 'running'` and `lease_expires_at` is in the
+ * future, renewing the lease as it works. An expired lease (crashed or timed
+ * out runner) or a failed run can be claimed again; see lib/jobs.ts.
+ */
 export const periodRunsTable = pgTable("period_runs", {
   period: text("period").primaryKey(),
-  /** open | closed */
+  /** running | closed | failed (legacy rows may say open) */
   status: text("status").notNull(),
   runAt: timestamp("run_at", { withTimezone: true }).notNull().defaultNow(),
   runBy: integer("run_by").references(() => usersTable.id),
   resellerCount: integer("reseller_count").notNull().default(0),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  /** Attempts since the month last closed successfully. */
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
 
-export const payoutsTable = pgTable("payouts", {
-  id: serial("id").primaryKey(),
-  payoutNumber: text("payout_number").notNull().unique(),
-  resellerId: integer("reseller_id")
-    .notNull()
-    .references(() => resellersTable.id),
-  amount: money("amount").notNull(),
-  entryCount: integer("entry_count").notNull(),
-  reference: text("reference"),
-  /** paid */
-  status: text("status").notNull().default("paid"),
-  createdBy: integer("created_by").references(() => usersTable.id),
-  createdAt: createdAt(),
-});
+/** History of scheduled/admin job executions: every attempt, its outcome and error. */
+export const jobRunsTable = pgTable(
+  "job_runs",
+  {
+    id: serial("id").primaryKey(),
+    /** month_end_qualification | eft_reservation_expiry */
+    job: text("job").notNull(),
+    period: text("period"),
+    /** schedule | admin | startup | cli | test */
+    trigger: text("trigger").notNull(),
+    actorId: integer("actor_id").references(() => usersTable.id),
+    owner: text("owner").notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    /** running | succeeded | failed | abandoned (lease lost: crashed, timed out or superseded) */
+    status: text("status").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    error: text("error"),
+    /** JSON summary of what the run did. */
+    result: text("result"),
+  },
+  (t) => [
+    index("job_runs_job_started_idx").on(t.job, t.startedAt),
+    check("job_runs_status_valid", sql`${t.status} in ('running', 'succeeded', 'failed', 'abandoned')`),
+  ],
+);
+export type JobRun = typeof jobRunsTable.$inferSelect;
+
+/**
+ * A payout is calculated (allocating approved ledger rows to it) separately
+ * from being executed. Lifecycle: pending (calculated) → approved →
+ * processing (handed to the bank / EFT batch) → paid, or failed (its ledger
+ * rows are released for a later payout). Nothing here moves money: the
+ * administrator records each step. At most one non-failed payout per
+ * reseller and payout period. Legacy rows (before this lifecycle) are
+ * `paid` with no period.
+ */
+export const payoutsTable = pgTable(
+  "payouts",
+  {
+    id: serial("id").primaryKey(),
+    payoutNumber: text("payout_number").notNull().unique(),
+    resellerId: integer("reseller_id")
+      .notNull()
+      .references(() => resellersTable.id),
+    /** Payout run period (YYYY-MM): approved incentives of this and earlier periods. */
+    period: text("period"),
+    amount: money("amount").notNull(),
+    entryCount: integer("entry_count").notNull(),
+    reference: text("reference"),
+    /** pending | approved | processing | paid | failed */
+    status: text("status").notNull().default("pending"),
+    createdBy: integer("created_by").references(() => usersTable.id),
+    createdAt: createdAt(),
+    approvedBy: integer("approved_by").references(() => usersTable.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    processingBy: integer("processing_by").references(() => usersTable.id),
+    processingAt: timestamp("processing_at", { withTimezone: true }),
+    paidBy: integer("paid_by").references(() => usersTable.id),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    failedBy: integer("failed_by").references(() => usersTable.id),
+    failedAt: timestamp("failed_at", { withTimezone: true }),
+    failureReason: text("failure_reason"),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("payouts_reseller_period_uq")
+      .on(t.resellerId, t.period)
+      .where(sql`period is not null and status <> 'failed'`),
+    check("payouts_amount_positive", sql`${t.amount} > 0`),
+    check("payouts_status_valid", sql`${t.status} in ('pending', 'approved', 'processing', 'paid', 'failed')`),
+  ],
+);
+export type Payout = typeof payoutsTable.$inferSelect;
+
+/**
+ * Every refund, cancellation, return or chargeback, once. `externalId` is the
+ * stable id of the source event (Shopify refund id, admin idempotency key):
+ * a replayed event finds the existing row instead of applying twice.
+ */
+export const refundsTable = pgTable(
+  "refunds",
+  {
+    id: serial("id").primaryKey(),
+    orderId: integer("order_id")
+      .notNull()
+      .references(() => ordersTable.id),
+    /** refund | cancel | return | chargeback */
+    type: text("type").notNull(),
+    /** admin | shopify */
+    source: text("source").notNull(),
+    externalId: text("external_id"),
+    reason: text("reason").notNull(),
+    /** Value of the refunded units at the price the buyer paid (0 for an unpaid cancellation). */
+    amount: money("amount").notNull(),
+    /** False for cancelling an unpaid order: reservations released, no money or incentives involved. */
+    orderWasPaid: boolean("order_was_paid").notNull(),
+    initiatedBy: integer("initiated_by").references(() => usersTable.id),
+    /** "user:<id>" or the integration that sent the event (e.g. "shopify"). */
+    actor: text("actor").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("refunds_source_external_uq").on(t.source, t.externalId).where(sql`external_id is not null`),
+    index("refunds_order_idx").on(t.orderId),
+  ],
+);
+export type Refund = typeof refundsTable.$inferSelect;
+
+export const refundItemsTable = pgTable(
+  "refund_items",
+  {
+    id: serial("id").primaryKey(),
+    refundId: integer("refund_id")
+      .notNull()
+      .references(() => refundsTable.id),
+    orderItemId: integer("order_item_id")
+      .notNull()
+      .references(() => orderItemsTable.id),
+    quantity: integer("quantity").notNull(),
+    amount: money("amount").notNull(),
+    /** Units returned to stock (cancel/return), or released from reservation (unpaid cancel). */
+    restockedQuantity: integer("restocked_quantity").notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex("refund_items_refund_item_uq").on(t.refundId, t.orderItemId),
+    index("refund_items_order_item_idx").on(t.orderItemId),
+    check("refund_items_quantity_positive", sql`${t.quantity} > 0`),
+  ],
+);
+export type RefundItem = typeof refundItemsTable.$inferSelect;
 
 /**
  * Commission / incentive ledger. One accrual row per order line, beneficiary
  * and incentive kind (enforced by a partial unique index over non-void rows —
- * protection against duplicate claims). Refunds never delete rows: they either mark an unpaid
- * accrual as reversed or add a negative reversal row.
+ * protection against duplicate claims). An accrual's amount is fixed at the
+ * line's full quantity; each refund adds one negative reversal row per
+ * affected accrual (unique per refund + accrual), so the net incentive is
+ * accrual + reversals and rows are never deleted or resized. Legacy rows may
+ * carry the old `reversed` status.
  */
 export const commissionLedgerTable = pgTable(
   "commission_ledger",
@@ -374,6 +521,8 @@ export const commissionLedgerTable = pgTable(
       (): AnyPgColumn => commissionLedgerTable.id,
     ),
     payoutId: integer("payout_id").references(() => payoutsTable.id),
+    /** The refund a reversal row belongs to (null for accruals and legacy reversals). */
+    refundId: integer("refund_id").references(() => refundsTable.id),
     note: text("note"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     paidAt: timestamp("paid_at", { withTimezone: true }),
@@ -385,8 +534,20 @@ export const commissionLedgerTable = pgTable(
     uniqueIndex("ledger_accrual_uq")
       .on(t.orderItemId, t.beneficiaryResellerId, t.kind)
       .where(sql`entry_type = 'accrual' and status <> 'void'`),
+    // A refund reverses each accrual at most once.
+    uniqueIndex("ledger_refund_reversal_uq")
+      .on(t.refundId, t.reversalOfId)
+      .where(sql`refund_id is not null`),
     index("ledger_beneficiary_idx").on(t.beneficiaryResellerId),
     index("ledger_period_idx").on(t.period),
+    index("ledger_order_idx").on(t.orderId),
+    index("ledger_reversal_of_idx").on(t.reversalOfId),
+    index("ledger_payout_idx").on(t.payoutId),
+    check(
+      "ledger_amount_sign",
+      sql`(${t.entryType} = 'accrual' and ${t.amount} >= 0) or (${t.entryType} = 'reversal' and ${t.amount} <= 0)`,
+    ),
+    check("ledger_status_valid", sql`${t.status} in ('pending', 'approved', 'paid', 'reversed', 'void')`),
   ],
 );
 export type LedgerEntry = typeof commissionLedgerTable.$inferSelect;
@@ -465,8 +626,22 @@ export const compensationSettingsTable = pgTable("compensation_settings", {
    * Empty = no bulk discounts.
    */
   bulkDiscountTiers: text("bulk_discount_tiers").notNull().default(""),
+  /**
+   * Hours an unpaid EFT order keeps its stock reserved before it is cancelled
+   * automatically. Null = never expire (requires a business decision; see
+   * docs/OPERATIONS.md).
+   */
+  eftReservationHours: integer("eft_reservation_hours"),
+  /**
+   * Hours an unpaid Shopify checkout (abandoned cart) keeps its stock reserved.
+   * Null = never expire (requires a business decision; see docs/OPERATIONS.md).
+   */
+  shopifyReservationHours: integer("shopify_reservation_hours"),
   updatedAt: updatedAt(),
-});
+}, (t) => [
+  check("settings_eft_reservation_hours_positive", sql`${t.eftReservationHours} is null or ${t.eftReservationHours} > 0`),
+  check("settings_shopify_reservation_hours_positive", sql`${t.shopifyReservationHours} is null or ${t.shopifyReservationHours} > 0`),
+]);
 export type CompensationSettings = typeof compensationSettingsTable.$inferSelect;
 
 export const auditLogsTable = pgTable(
@@ -558,8 +733,10 @@ export const enquiriesTable = pgTable("enquiries", {
 });
 
 export const fraudFlagsTable = pgTable("fraud_flags", {
+  /** The quarantined payment this flag is about; resolving that payment closes the flag. */
+  paymentEventId: integer("payment_event_id").references((): AnyPgColumn => paymentEventsTable.id),
   id: serial("id").primaryKey(),
-  /** self_referral | duplicate_order | duplicate_account | unusual_order | large_order | refund_commission | suspicious_referral */
+  /** self_referral | duplicate_order | payment_rejected | webhook_rejected | duplicate_account | unusual_order | large_order | refund_commission | suspicious_referral */
   type: text("type").notNull(),
   /** low | medium | high */
   severity: text("severity").notNull(),
@@ -572,6 +749,70 @@ export const fraudFlagsTable = pgTable("fraud_flags", {
   createdAt: createdAt(),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
 });
+
+/**
+ * Every payment notification received from a provider, whatever the outcome.
+ * `event_key` identifies the payment (e.g. "orders/paid:<Shopify order id>"),
+ * so retried or concurrent deliveries of the same payment are recorded — and
+ * applied — once. Rejected payments stay here (quarantined) for review; they
+ * never change an order, stock or incentives.
+ */
+export const paymentEventsTable = pgTable(
+  "payment_events",
+  {
+    id: serial("id").primaryKey(),
+    /** shopify */
+    provider: text("provider").notNull(),
+    topic: text("topic").notNull(),
+    eventKey: text("event_key").notNull(),
+    /** Provider delivery id (X-Shopify-Webhook-Id), for tracing. */
+    deliveryId: text("delivery_id"),
+    /**
+     * Provenance of the delivery, for proving a payment came from the real
+     * provider: the sending store (X-Shopify-Shop-Domain, checked against the
+     * configured store), the webhook API version, and Shopify's test flag.
+     */
+    shopDomain: text("shop_domain"),
+    apiVersion: text("api_version"),
+    testPayment: boolean("test_payment"),
+    orderId: integer("order_id").references(() => ordersTable.id),
+    externalOrderId: text("external_order_id"),
+    externalReference: text("external_reference"),
+    amount: money("amount"),
+    currency: text("currency"),
+    financialStatus: text("financial_status"),
+    /** applied | already_applied | rejected */
+    outcome: text("outcome").notNull(),
+    /** Why a payment was rejected (amount_mismatch, currency_mismatch, partial_payment, …). */
+    reason: text("reason"),
+    createdAt: createdAt(),
+    /**
+     * Administrator resolution of a rejected (quarantined) payment. Recording
+     * a resolution never changes the order or moves money; it documents what
+     * was done elsewhere (refund in Shopify, manual confirmation, …).
+     */
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: integer("resolved_by").references(() => usersTable.id),
+    /** refunded_in_shopify | confirmed_order_paid | no_action_required | other */
+    resolutionAction: text("resolution_action"),
+    resolutionReason: text("resolution_reason"),
+    /** Order status when the resolution was recorded. */
+    resolutionOrderStatus: text("resolution_order_status"),
+  },
+  (t) => [
+    uniqueIndex("payment_events_provider_key_uq").on(t.provider, t.eventKey),
+    index("payment_events_order_idx").on(t.orderId),
+    check("payment_events_outcome_valid", sql`${t.outcome} in ('applied', 'already_applied', 'rejected')`),
+    check(
+      "payment_events_resolution_valid",
+      sql`(${t.resolvedAt} is null and ${t.resolvedBy} is null and ${t.resolutionAction} is null and ${t.resolutionReason} is null)
+        or (${t.outcome} = 'rejected' and ${t.resolvedAt} is not null and ${t.resolvedBy} is not null
+            and ${t.resolutionAction} in ('refunded_in_shopify', 'confirmed_order_paid', 'no_action_required', 'other')
+            and length(trim(${t.resolutionReason})) >= 5)`,
+    ),
+  ],
+);
+export type PaymentEvent = typeof paymentEventsTable.$inferSelect;
 
 export const wishlistItemsTable = pgTable(
   "wishlist_items",
@@ -607,6 +848,48 @@ export const referralVisitsTable = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("referral_visits_reseller_idx").on(t.resellerId)],
+);
+
+/**
+ * Migrations applied by lib/db/scripts/migrate.mjs (one row per file in
+ * lib/db/migrations). Declared here so `drizzle-kit push` on a development
+ * database keeps the table instead of dropping it.
+ */
+export const schemaMigrationsTable = pgTable("schema_migrations", {
+  name: text("name").primaryKey(),
+  checksum: text("checksum").notNull(),
+  appliedAt: timestamp("applied_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Shared rate-limit counters (fixed window), so every server instance and
+ * serverless function counts against the same allowance. `bucket` is a hash
+ * of the client address and endpoint — no raw IP addresses are stored.
+ */
+export const rateLimitsTable = pgTable("rate_limits", {
+  bucket: text("bucket").primaryKey(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+  count: integer("count").notNull(),
+});
+
+/**
+ * Which environment this database belongs to (production | staging |
+ * development), set once with the migration runner (`--environment`). A
+ * deployment refuses to serve from a database marked for another environment,
+ * so a deploy preview can never write to the production database.
+ */
+export const deploymentMarkerTable = pgTable(
+  "deployment_marker",
+  {
+    id: integer("id").primaryKey().default(1),
+    environment: text("environment").notNull(),
+    markedAt: timestamp("marked_at", { withTimezone: true }).notNull().defaultNow(),
+    markedBy: text("marked_by"),
+  },
+  (t) => [
+    check("deployment_marker_single_row", sql`${t.id} = 1`),
+    check("deployment_marker_environment_valid", sql`${t.environment} in ('production', 'staging', 'development')`),
+  ],
 );
 
 /** Editable website copy (hero, announcement bar, banking details, …). */

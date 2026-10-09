@@ -28,4 +28,10 @@ export interface CheckoutInput {
      */
   notes?: string | null;
   saveAddress?: boolean;
+  /**
+     * Random key generated once per checkout attempt. A retried or double-submitted request with the same key returns the order the first one created (HTTP 200) instead of placing a second order.
+     * @minLength 16
+     * @maxLength 100
+     */
+  idempotencyKey?: string;
 }

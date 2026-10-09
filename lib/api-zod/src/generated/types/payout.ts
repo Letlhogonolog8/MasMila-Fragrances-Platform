@@ -5,15 +5,32 @@
  * Mas'Mila storefront, reseller portal, team/commission engine and admin API
  * OpenAPI spec version: 0.2.0
  */
+import type { PayoutStatus } from './payoutStatus';
 
 export interface Payout {
   id: number;
   payoutNumber: string;
   resellerName: string;
   resellerCode: string;
+  /**
+     * Payout run period (YYYY-MM); null on payouts recorded before payout periods existed
+     * @nullable
+     */
+  period: string | null;
+  status: PayoutStatus;
   amount: number;
   entryCount: number;
   /** @nullable */
   reference: string | null;
   createdAt: string;
+  /** @nullable */
+  approvedAt: string | null;
+  /** @nullable */
+  processingAt: string | null;
+  /** @nullable */
+  paidAt: string | null;
+  /** @nullable */
+  failedAt: string | null;
+  /** @nullable */
+  failureReason: string | null;
 }

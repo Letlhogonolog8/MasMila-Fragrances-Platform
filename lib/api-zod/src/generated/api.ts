@@ -268,6 +268,9 @@ export const checkoutBodyAddressProvinceMin = 2;
 export const checkoutBodyAddressPostalCodeRegExp = new RegExp('^[0-9]{4}$');
 export const checkoutBodyNotesMax = 1000;
 
+export const checkoutBodyIdempotencyKeyMin = 16;
+export const checkoutBodyIdempotencyKeyMax = 100;
+
 
 
 export const CheckoutBody = zod.object({
@@ -294,7 +297,8 @@ export const CheckoutBody = zod.object({
   "referralCode": zod.string().nullish(),
   "attributionSource": zod.string().nullish(),
   "notes": zod.string().max(checkoutBodyNotesMax).nullish(),
-  "saveAddress": zod.boolean().optional()
+  "saveAddress": zod.boolean().optional(),
+  "idempotencyKey": zod.string().min(checkoutBodyIdempotencyKeyMin).max(checkoutBodyIdempotencyKeyMax).optional().describe('Random key generated once per checkout attempt. A retried or double-submitted request with the same key returns the order the first one created (HTTP 200) instead of placing a second order.')
 })
 
 export const CheckoutResponse = zod.object({
@@ -762,7 +766,10 @@ export const ListResellerIncentivesResponseItem = zod.object({
   "status": zod.string(),
   "note": zod.string().nullable(),
   "createdAt": zod.string(),
-  "paidAt": zod.string().nullable()
+  "paidAt": zod.string().nullable(),
+  "reversalOfId": zod.number().int().nullish().describe('The accrual a reversal row reverses'),
+  "refundId": zod.number().int().nullish().describe('The refund a reversal row belongs to'),
+  "payoutId": zod.number().int().nullish().describe('The payout this row is allocated to')
 })
 export const ListResellerIncentivesResponse = zod.array(ListResellerIncentivesResponseItem)
 
@@ -932,6 +939,8 @@ export const GetAdminSummaryResponse = zod.object({
 
 export const GetAdminSettingsResponse = zod.object({
   "bulkDiscountTiers": zod.string(),
+  "eftReservationHours": zod.number().int().nullable().describe('Hours an unpaid EFT order keeps its stock before it is cancelled; null = never'),
+  "shopifyReservationHours": zod.number().int().nullable().describe('Hours an unfinished Shopify checkout keeps its stock before it is cancelled; null = never'),
   "openingOrder": zod.number().int(),
   "reorderMinimum": zod.number().int(),
   "teamLeaderRate": zod.number(),
@@ -1009,6 +1018,10 @@ export const updateAdminSettingsBodyFreeShippingThresholdMin = 0;
 export const updateAdminSettingsBodyMonthlyContributionTargetMin = 0;
 
 export const updateAdminSettingsBodyBulkDiscountTiersRegExp = new RegExp('^$|^[0-9]+:[0-9]+([.][0-9]+)?(,[0-9]+:[0-9]+([.][0-9]+)?)*$');
+export const updateAdminSettingsBodyEftReservationHoursMax = 720;
+
+export const updateAdminSettingsBodyShopifyReservationHoursMax = 720;
+
 
 
 export const UpdateAdminSettingsBody = zod.object({
@@ -1037,11 +1050,15 @@ export const UpdateAdminSettingsBody = zod.object({
   "shippingFlatRate": zod.number().min(updateAdminSettingsBodyShippingFlatRateMin).optional(),
   "freeShippingThreshold": zod.number().min(updateAdminSettingsBodyFreeShippingThresholdMin).optional(),
   "monthlyContributionTarget": zod.number().min(updateAdminSettingsBodyMonthlyContributionTargetMin).optional(),
-  "bulkDiscountTiers": zod.string().regex(updateAdminSettingsBodyBulkDiscountTiersRegExp).optional()
+  "bulkDiscountTiers": zod.string().regex(updateAdminSettingsBodyBulkDiscountTiersRegExp).optional(),
+  "eftReservationHours": zod.number().int().min(1).max(updateAdminSettingsBodyEftReservationHoursMax).nullish(),
+  "shopifyReservationHours": zod.number().int().min(1).max(updateAdminSettingsBodyShopifyReservationHoursMax).nullish()
 })
 
 export const UpdateAdminSettingsResponse = zod.object({
   "bulkDiscountTiers": zod.string(),
+  "eftReservationHours": zod.number().int().nullable().describe('Hours an unpaid EFT order keeps its stock before it is cancelled; null = never'),
+  "shopifyReservationHours": zod.number().int().nullable().describe('Hours an unfinished Shopify checkout keeps its stock before it is cancelled; null = never'),
   "openingOrder": zod.number().int(),
   "reorderMinimum": zod.number().int(),
   "teamLeaderRate": zod.number(),
@@ -1558,12 +1575,16 @@ export const RefundAdminOrderParams = zod.object({
 
 export const refundAdminOrderBodyReasonMin = 2;
 
+export const refundAdminOrderBodyIdempotencyKeyMin = 8;
+export const refundAdminOrderBodyIdempotencyKeyMax = 100;
+
 
 
 
 export const RefundAdminOrderBody = zod.object({
   "type": zod.enum(['refund', 'cancel', 'return', 'chargeback']),
   "reason": zod.string().min(refundAdminOrderBodyReasonMin),
+  "idempotencyKey": zod.string().min(refundAdminOrderBodyIdempotencyKeyMin).max(refundAdminOrderBodyIdempotencyKeyMax).optional().describe('Same key = same refund. A retried or double-submitted request with a key already used for this order changes nothing.'),
   "items": zod.array(zod.object({
   "orderItemId": zod.number().int(),
   "quantity": zod.number().int().min(1)
@@ -1639,7 +1660,10 @@ export const ListAdminCommissionsResponseItem = zod.object({
   "status": zod.string(),
   "note": zod.string().nullable(),
   "createdAt": zod.string(),
-  "paidAt": zod.string().nullable()
+  "paidAt": zod.string().nullable(),
+  "reversalOfId": zod.number().int().nullish().describe('The accrual a reversal row reverses'),
+  "refundId": zod.number().int().nullish().describe('The refund a reversal row belongs to'),
+  "payoutId": zod.number().int().nullish().describe('The payout this row is allocated to')
 })
 export const ListAdminCommissionsResponse = zod.array(ListAdminCommissionsResponseItem)
 
@@ -1661,18 +1685,29 @@ export const ListAdminPayoutsResponseItem = zod.object({
   "payoutNumber": zod.string(),
   "resellerName": zod.string(),
   "resellerCode": zod.string(),
+  "period": zod.string().nullable().describe('Payout run period (YYYY-MM); null on payouts recorded before payout periods existed'),
+  "status": zod.enum(['pending', 'approved', 'processing', 'paid', 'failed']),
   "amount": zod.number(),
   "entryCount": zod.number().int(),
   "reference": zod.string().nullable(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "approvedAt": zod.string().nullable(),
+  "processingAt": zod.string().nullable(),
+  "paidAt": zod.string().nullable(),
+  "failedAt": zod.string().nullable(),
+  "failureReason": zod.string().nullable()
 })
 export const ListAdminPayoutsResponse = zod.array(ListAdminPayoutsResponseItem)
 
 
 /**
- * @summary Pay out all approved incentives (optionally for selected resellers)
+ * @summary Calculate pending payouts of approved incentives for a closed period (optionally for selected resellers). Moves no money.
  */
+export const createPayoutsBodyPeriodRegExp = new RegExp('^[0-9]{4}-[0-9]{2}$');
+
+
 export const CreatePayoutsBody = zod.object({
+  "period": zod.string().regex(createPayoutsBodyPeriodRegExp).describe('Payout period; must have been closed by the month-end qualification run. Approved incentives of this and earlier periods are included.'),
   "resellerIds": zod.array(zod.number().int()).optional(),
   "reference": zod.string().nullish()
 })
@@ -1682,12 +1717,51 @@ export const CreatePayoutsResponseItem = zod.object({
   "payoutNumber": zod.string(),
   "resellerName": zod.string(),
   "resellerCode": zod.string(),
+  "period": zod.string().nullable().describe('Payout run period (YYYY-MM); null on payouts recorded before payout periods existed'),
+  "status": zod.enum(['pending', 'approved', 'processing', 'paid', 'failed']),
   "amount": zod.number(),
   "entryCount": zod.number().int(),
   "reference": zod.string().nullable(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "approvedAt": zod.string().nullable(),
+  "processingAt": zod.string().nullable(),
+  "paidAt": zod.string().nullable(),
+  "failedAt": zod.string().nullable(),
+  "failureReason": zod.string().nullable()
 })
 export const CreatePayoutsResponse = zod.array(CreatePayoutsResponseItem)
+
+
+/**
+ * @summary Record the next payout step (approved → processing → paid, or failed). Moves no money.
+ */
+export const UpdateAdminPayoutParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const UpdateAdminPayoutBody = zod.object({
+  "status": zod.enum(['approved', 'processing', 'paid', 'failed']),
+  "reference": zod.string().nullish().describe('Bank / EFT batch reference'),
+  "failureReason": zod.string().nullish().describe('Required when marking a payout failed')
+})
+
+export const UpdateAdminPayoutResponse = zod.object({
+  "id": zod.number().int(),
+  "payoutNumber": zod.string(),
+  "resellerName": zod.string(),
+  "resellerCode": zod.string(),
+  "period": zod.string().nullable().describe('Payout run period (YYYY-MM); null on payouts recorded before payout periods existed'),
+  "status": zod.enum(['pending', 'approved', 'processing', 'paid', 'failed']),
+  "amount": zod.number(),
+  "entryCount": zod.number().int(),
+  "reference": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "approvedAt": zod.string().nullable(),
+  "processingAt": zod.string().nullable(),
+  "paidAt": zod.string().nullable(),
+  "failedAt": zod.string().nullable(),
+  "failureReason": zod.string().nullable()
+})
 
 
 export const GetQualificationQueryParams = zod.object({
@@ -1801,6 +1875,229 @@ export const UpdateFraudFlagResponse = zod.object({
   "orderNumber": zod.string().nullable(),
   "userId": zod.number().int().nullable(),
   "userEmail": zod.string().nullable()
+})
+
+
+/**
+ * Payment notifications received from Shopify. Defaults to quarantined payments awaiting review.
+ */
+export const listPaymentEventsQueryQMax = 100;
+
+
+
+export const ListPaymentEventsQueryParams = zod.object({
+  "review": zod.enum(['open', 'resolved', 'rejected', 'all']).optional(),
+  "reason": zod.coerce.string().optional(),
+  "q": zod.coerce.string().max(listPaymentEventsQueryQMax).optional()
+})
+
+export const ListPaymentEventsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "provider": zod.string(),
+  "topic": zod.string(),
+  "externalOrderId": zod.string().nullable(),
+  "externalReference": zod.string().nullable(),
+  "deliveryId": zod.string().nullable(),
+  "amount": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "financialStatus": zod.string().nullable(),
+  "outcome": zod.string().describe('applied | already_applied | rejected'),
+  "reason": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "order": zod.union([zod.object({
+  "id": zod.number().int(),
+  "orderNumber": zod.string(),
+  "status": zod.string(),
+  "paymentMethod": zod.string(),
+  "total": zod.number(),
+  "paidAt": zod.string().nullable(),
+  "shopifyOrderId": zod.string().nullable()
+}),zod.null()]),
+  "expectedAmount": zod.number().nullable(),
+  "difference": zod.number().nullable().describe('Received minus expected'),
+  "review": zod.enum(['open', 'resolved', 'not_required']),
+  "resolution": zod.union([zod.object({
+  "action": zod.string(),
+  "reason": zod.string(),
+  "resolvedAt": zod.string(),
+  "resolvedBy": zod.string(),
+  "orderStatusAtResolution": zod.string().nullable()
+}),zod.null()])
+})
+export const ListPaymentEventsResponse = zod.array(ListPaymentEventsResponseItem)
+
+
+export const GetPaymentEventParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const GetPaymentEventResponse = zod.object({
+  "event": zod.object({
+  "id": zod.number().int(),
+  "provider": zod.string(),
+  "topic": zod.string(),
+  "externalOrderId": zod.string().nullable(),
+  "externalReference": zod.string().nullable(),
+  "deliveryId": zod.string().nullable(),
+  "amount": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "financialStatus": zod.string().nullable(),
+  "outcome": zod.string().describe('applied | already_applied | rejected'),
+  "reason": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "order": zod.union([zod.object({
+  "id": zod.number().int(),
+  "orderNumber": zod.string(),
+  "status": zod.string(),
+  "paymentMethod": zod.string(),
+  "total": zod.number(),
+  "paidAt": zod.string().nullable(),
+  "shopifyOrderId": zod.string().nullable()
+}),zod.null()]),
+  "expectedAmount": zod.number().nullable(),
+  "difference": zod.number().nullable().describe('Received minus expected'),
+  "review": zod.enum(['open', 'resolved', 'not_required']),
+  "resolution": zod.union([zod.object({
+  "action": zod.string(),
+  "reason": zod.string(),
+  "resolvedAt": zod.string(),
+  "resolvedBy": zod.string(),
+  "orderStatusAtResolution": zod.string().nullable()
+}),zod.null()])
+}),
+  "related": zod.array(zod.object({
+  "id": zod.number().int(),
+  "provider": zod.string(),
+  "topic": zod.string(),
+  "externalOrderId": zod.string().nullable(),
+  "externalReference": zod.string().nullable(),
+  "deliveryId": zod.string().nullable(),
+  "amount": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "financialStatus": zod.string().nullable(),
+  "outcome": zod.string().describe('applied | already_applied | rejected'),
+  "reason": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "order": zod.union([zod.object({
+  "id": zod.number().int(),
+  "orderNumber": zod.string(),
+  "status": zod.string(),
+  "paymentMethod": zod.string(),
+  "total": zod.number(),
+  "paidAt": zod.string().nullable(),
+  "shopifyOrderId": zod.string().nullable()
+}),zod.null()]),
+  "expectedAmount": zod.number().nullable(),
+  "difference": zod.number().nullable().describe('Received minus expected'),
+  "review": zod.enum(['open', 'resolved', 'not_required']),
+  "resolution": zod.union([zod.object({
+  "action": zod.string(),
+  "reason": zod.string(),
+  "resolvedAt": zod.string(),
+  "resolvedBy": zod.string(),
+  "orderStatusAtResolution": zod.string().nullable()
+}),zod.null()])
+})),
+  "history": zod.array(zod.object({
+  "id": zod.number().int(),
+  "action": zod.string(),
+  "actorId": zod.string().nullable(),
+  "entityType": zod.string(),
+  "entityId": zod.string().nullable(),
+  "metadata": zod.string().nullable(),
+  "createdAt": zod.string()
+}))
+})
+
+
+/**
+ * Records how a quarantined payment was dealt with. Never changes the order or moves money.
+ */
+export const ResolvePaymentEventParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const resolvePaymentEventBodyReasonMin = 5;
+export const resolvePaymentEventBodyReasonMax = 1000;
+
+
+
+export const ResolvePaymentEventBody = zod.object({
+  "action": zod.enum(['refunded_in_shopify', 'confirmed_order_paid', 'no_action_required', 'other']),
+  "reason": zod.string().min(resolvePaymentEventBodyReasonMin).max(resolvePaymentEventBodyReasonMax)
+})
+
+export const ResolvePaymentEventResponse = zod.object({
+  "id": zod.number().int(),
+  "provider": zod.string(),
+  "topic": zod.string(),
+  "externalOrderId": zod.string().nullable(),
+  "externalReference": zod.string().nullable(),
+  "deliveryId": zod.string().nullable(),
+  "amount": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "financialStatus": zod.string().nullable(),
+  "outcome": zod.string().describe('applied | already_applied | rejected'),
+  "reason": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "order": zod.union([zod.object({
+  "id": zod.number().int(),
+  "orderNumber": zod.string(),
+  "status": zod.string(),
+  "paymentMethod": zod.string(),
+  "total": zod.number(),
+  "paidAt": zod.string().nullable(),
+  "shopifyOrderId": zod.string().nullable()
+}),zod.null()]),
+  "expectedAmount": zod.number().nullable(),
+  "difference": zod.number().nullable().describe('Received minus expected'),
+  "review": zod.enum(['open', 'resolved', 'not_required']),
+  "resolution": zod.union([zod.object({
+  "action": zod.string(),
+  "reason": zod.string(),
+  "resolvedAt": zod.string(),
+  "resolvedBy": zod.string(),
+  "orderStatusAtResolution": zod.string().nullable()
+}),zod.null()])
+})
+
+
+export const GetJobOverviewResponse = zod.object({
+  "months": zod.array(zod.object({
+  "period": zod.string(),
+  "status": zod.string(),
+  "attempts": zod.number().int(),
+  "lastError": zod.string().nullable(),
+  "startedAt": zod.string().nullable(),
+  "finishedAt": zod.string().nullable(),
+  "leaseExpiresAt": zod.string().nullable(),
+  "resellerCount": zod.number().int()
+})),
+  "runs": zod.array(zod.object({
+  "id": zod.number().int(),
+  "job": zod.string(),
+  "period": zod.string().nullable(),
+  "trigger": zod.string(),
+  "attempt": zod.number().int(),
+  "status": zod.string(),
+  "startedAt": zod.string(),
+  "finishedAt": zod.string().nullable(),
+  "error": zod.string().nullable(),
+  "result": zod.string().nullable()
+}))
+})
+
+
+/**
+ * What the server sees of the caller's address, for verifying TRUSTED_PROXY_HOPS.
+ */
+export const GetClientIpDiagnosticResponse = zod.object({
+  "clientIp": zod.string(),
+  "source": zod.string(),
+  "trustedProxyHops": zod.number().int(),
+  "socketAddress": zod.string().nullable(),
+  "forwardedFor": zod.string().nullable(),
+  "netlifyClientIp": zod.string().nullable()
 })
 
 

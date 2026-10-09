@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { Link, useLocation, useSearch } from 'wouter';
 import { SignIn, SignUp } from '@clerk/react';
 import { ArrowRight } from 'lucide-react';
@@ -6,14 +6,29 @@ import { basePath, useAuthApi, useMe } from '@/lib/auth';
 import { useStoreConfig } from '@/components/site';
 import { useSeo } from '@/lib/seo';
 
-const DEMO_ACCOUNTS = [
-  { email: 'admin@masmila.co.za', label: 'Administrator' },
-  { email: 'manager@masmila.co.za', label: 'Manager — Thandi' },
-  { email: 'teamleader@masmila.co.za', label: 'Team Leader — Nomdade' },
-  { email: 'reseller@masmila.co.za', label: 'Reseller — Ayanda' },
-  { email: 'newreseller@masmila.co.za', label: 'New reseller (no opening order)' },
-  { email: 'customer@masmila.co.za', label: 'Customer — Palesa' },
-];
+// Dev server only: stripped from production bundles (import.meta.env.DEV is false in `vite build`).
+const DEMO_ACCOUNTS = import.meta.env.DEV
+  ? [
+      { email: 'admin@masmila.co.za', label: 'Administrator' },
+      { email: 'manager@masmila.co.za', label: 'Manager — Thandi' },
+      { email: 'teamleader@masmila.co.za', label: 'Team Leader — Nomdade' },
+      { email: 'reseller@masmila.co.za', label: 'Reseller — Ayanda' },
+      { email: 'newreseller@masmila.co.za', label: 'New reseller (no opening order)' },
+      { email: 'customer@masmila.co.za', label: 'Customer — Palesa' },
+    ]
+  : [];
+
+function SignInUnavailable() {
+  return <div className="form-card" data-testid="sign-in-unavailable"><h2>Sign-in is temporarily unavailable.</h2><p className="muted">Please try again shortly, or contact Mas'Mila if this continues.</p></div>;
+}
+
+/** Clerk, the dev-only demo sign-in, or the "unavailable" notice. */
+function AuthPanel({ clerk, next }: { clerk: ReactNode; next: string | null }) {
+  const auth = useAuthApi();
+  if (auth.mode === 'clerk') return <>{clerk}</>;
+  if (auth.mode === 'demo' && import.meta.env.DEV) return <DemoSignIn next={next} />;
+  return <SignInUnavailable />;
+}
 
 function safeNext(next: string | null) {
   return next && next.startsWith('/') && !next.startsWith('//') ? next : null;
@@ -57,25 +72,21 @@ function DemoSignIn({ next }: { next: string | null }) {
 }
 
 export function SignInPage() {
-  const auth = useAuthApi();
   const next = safeNext(new URLSearchParams(useSearch()).get('next'));
   useSeo({ title: 'Sign in', noindex: true });
   return (
     <main className="auth-page">
-      {auth.mode === 'clerk'
-        ? <SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} fallbackRedirectUrl={`${basePath}${next ?? '/account'}`} />
-        : <DemoSignIn next={next} />}
+      <AuthPanel next={next} clerk={<SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} fallbackRedirectUrl={`${basePath}${next ?? '/account'}`} />} />
       <Link href="/" className="small-link">← Back to Mas'Mila</Link>
     </main>
   );
 }
 
 export function SignUpPage() {
-  const auth = useAuthApi();
   useSeo({ title: 'Create an account', noindex: true });
   return (
     <main className="auth-page">
-      {auth.mode === 'clerk' ? <SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} fallbackRedirectUrl={`${basePath}/account`} /> : <DemoSignIn next="/account" />}
+      <AuthPanel next="/account" clerk={<SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} fallbackRedirectUrl={`${basePath}/account`} />} />
       <Link href="/" className="small-link">← Back to Mas'Mila</Link>
     </main>
   );

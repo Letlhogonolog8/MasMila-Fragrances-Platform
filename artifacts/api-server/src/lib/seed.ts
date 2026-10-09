@@ -15,19 +15,25 @@ import { resellerCodeFor } from "./codes";
 import { createOrder, markOrderPaid } from "./orders";
 import { logger } from "./logger";
 import { adminEmails } from "./notify";
+import { demoSeedAllowed } from "./runtime-env";
 
-/** Idempotent base data every environment needs. */
+/**
+ * Idempotent base data every environment needs. The sample catalogue and
+ * sample marketing links are development/test conveniences only: production
+ * starts with an empty catalogue that the administrator fills in.
+ */
 export async function ensureBaseData() {
   await getSettings();
+  const sampleData = demoSeedAllowed();
   const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(productsTable);
-  if (count === 0) {
+  if (count === 0 && sampleData) {
     await db.insert(productsTable).values(seedProducts()).onConflictDoNothing();
-    logger.info("Seeded fragrance catalogue");
+    logger.info("Seeded sample fragrance catalogue");
   }
   // Only exact seeded placeholder URLs are cleared — never an uploaded photo.
   await db.update(productsTable).set({ image: "" }).where(inArray(productsTable.image, LEGACY_PLACEHOLDER_IMAGES));
   const [{ count: materials }] =await db.select({ count: sql<number>`count(*)::int` }).from(marketingMaterialsTable);
-  if (materials === 0) await db.insert(marketingMaterialsTable).values(DEFAULT_MARKETING);
+  if (materials === 0 && sampleData) await db.insert(marketingMaterialsTable).values(DEFAULT_MARKETING);
   await db
     .insert(siteContentTable)
     .values(Object.entries(DEFAULT_SITE_CONTENT).map(([key, value]) => ({ key, value })))
@@ -50,6 +56,8 @@ const DEMO_ADDRESS = { line1: "12 Jacaranda Street", suburb: "Hatfield", city: "
  * 20 bottles of 50ml at the R140 reseller price this month.
  */
 export async function seedDemoNetwork() {
+  // Defence in depth: the demo network includes a passwordless admin identity.
+  if (!demoSeedAllowed()) throw new Error("Refusing to seed demo accounts outside development/test");
   const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(resellersTable);
   if (count > 0) return;
   logger.info("Seeding demo reseller network");

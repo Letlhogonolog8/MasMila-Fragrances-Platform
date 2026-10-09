@@ -28,4 +28,19 @@ export interface LedgerEntry {
   createdAt: string;
   /** @nullable */
   paidAt: string | null;
+  /**
+     * The accrual a reversal row reverses
+     * @nullable
+     */
+  reversalOfId?: number | null;
+  /**
+     * The refund a reversal row belongs to
+     * @nullable
+     */
+  refundId?: number | null;
+  /**
+     * The payout this row is allocated to
+     * @nullable
+     */
+  payoutId?: number | null;
 }
